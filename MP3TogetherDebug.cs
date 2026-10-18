@@ -1,0 +1,277 @@
+﻿using System;
+using System.Collections;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using BepInEx;
+using BepInEx.Bootstrap;
+using BepInEx.Configuration;
+using BepInEx.Logging;
+using HarmonyLib;
+using LiteNetLib;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using Together;
+
+namespace MP3Client {
+    internal class MP3ClientLog {
+        protected const string TAG = "[debug] ";
+        public virtual void Info(string message) { MP3TogetherDebug.Log.LogInfo(TAG + message); }
+        public virtual void Warn(string message) { MP3TogetherDebug.Log.LogWarning(TAG + message); }
+        public virtual void Error(string message) { MP3TogetherDebug.Log.LogError(TAG + message); }
+        public virtual void SendStart(ushort syncId, string fileName, int totalBytes) { }
+        public virtual void SendChunk(ushort syncId, int chunkIndex, int offset, int length, float elapsedSeconds, float sinceLastSeconds) { }
+        public virtual void SendChunkFailed(ushort syncId, int chunkIndex, int offset, Exception e) { Error("send chunk FAILED syncId=" + syncId + " #" + chunkIndex + " offset=" + offset + " : " + e); }
+        public virtual void SendProgress(ushort syncId, int sentBytes, int totalBytes, float elapsedSeconds) { }
+        public virtual void SendDone(ushort syncId, int totalBytes, float elapsedSeconds) { }
+        public virtual void SendAckStalled(ushort syncId) { }
+        public virtual void SendCoroutineExit(ushort syncId, string reason) { }
+        public virtual void RecvBegin(ushort syncId, int totalBytes, string ext) { }
+        public virtual void RecvProgress(ushort syncId, int receivedChunks, int totalChunks, float elapsedSeconds) { }
+        public virtual void RecvStalled(ushort syncId, int resendFromOffset) { Warn("recv stalled syncId=" + syncId + " - requesting resend from offset " + resendFromOffset); }
+        public virtual void RecvDone(ushort syncId, int totalBytes, float elapsedSeconds) { }
+        public virtual void RecvCancelled(ushort syncId) { }
+        public virtual void DecodeReplaced(ushort syncId) { }
+        public virtual void DecodeDropped(ushort syncId) { }
+        public virtual void PreviewStarted(ushort syncId, int prefixBytes, int totalBytes) { }
+        public virtual void PreviewPlaying(ushort syncId, float clipSeconds, float decodeSeconds) { }
+        public virtual void PreviewDropped(ushort syncId, string reason) { }
+        public virtual void SwapDone(ushort syncId, float resumeAt, bool paused) { }
+        public virtual void SwapSkipped(ushort syncId, string reason) { }
+        public virtual void TransferFrom(ushort sender, ushort syncId, int totalBytes, string ext) { }
+        public virtual void TransferRejected(ushort sender, ushort syncId, string reason, int totalBytes) { }
+        public virtual void TransferSuperseded(ushort sender, ushort syncId, string reason) { }
+        public virtual void ActiveTransfers(int count, long bufferedBytes) { }
+        public virtual void FullDecodeFailed(ushort syncId, string error) { }
+        public virtual void PreviewFailed(ushort syncId, string error) { }
+        public virtual void ClipFreed(ushort syncId, string why) { }
+        public virtual void TempSwept(int count, long bytes) { }
+        public virtual void OutdatedClient(ushort sender, byte protocol) { }
+        public virtual void OpusFailed(string stage, string detail) { }
+        public virtual void ErrorCaught(string stage, string detail) { }
+        public virtual void SendRejected(ushort syncId, byte reason, int maxBytes) { }
+        public virtual void SendBlockedBySize(ushort syncId, long length, long limit) { }
+        public virtual void SendAborted(ushort syncId, string reason) { }
+        public virtual void SendThrottled(ushort syncId, string reason) { }
+        public virtual void SessionStarted() { }
+        public virtual void SessionEnded(string reason) { }
+        public virtual void TotalsSummary(string reason) { }
+        public virtual void RecvDeadlineHit(ushort syncId) { Warn("recv deadline hit syncId=" + syncId + " - finalizing with whatever arrived, likely incomplete/corrupt file"); }
+        public virtual void LogItemComponents(object item) { }
+        public virtual void Trace(string stage, string detail) { }
+        public virtual void UIState(string stage, string detail) { }
+        public virtual void NetState(string stage, string detail) { }
+        public virtual void PatchedMethodsSummary(List<MethodBase> methods) { }
+        public virtual void StateDump(bool networkRunning, bool isServer, bool isClient, bool autoLoadMusic, bool autoRequestMusic, float uiVerticalOffset, bool uiOnTop, bool coloredButtons, string hostPluginStatus, bool pendingActive, string pendingRequester, string customMusicFolder, int customMusicSongCount, int gatedUIControlsCount, bool libDropdownBuilt, bool deviceFolderLoadTriggered, bool wasNetworkRunning) { }
+    }
+    [BepInPlugin("02dumbass.mp3client", "MP3Client", UpdaterConfig.PLUGIN_VERSION)]
+    [BepInDependency("CasualtiesMP", BepInDependency.DependencyFlags.SoftDependency)]
+    public class MP3TogetherDebug : BaseUnityPlugin {
+        internal static ManualLogSource Log;
+        internal static MP3TogetherDebug Instance;
+        internal static MP3ClientLog Debug = new MP3ClientLog();
+        private static readonly ConcurrentQueue<Action> mainThreadQueue = new ConcurrentQueue<Action>();
+        internal static ConfigEntry<bool> AutoLoadMusic;
+        internal static ConfigEntry<bool> DebugMode;
+        internal static ConfigEntry<bool> AutoRequestMusic;
+        internal static ConfigEntry<float> UIVerticalOffset;
+        internal static ConfigEntry<bool> UIOnTop;
+        internal static ConfigEntry<bool> ColoredButtons;
+        private static float nextSweep;
+        internal static bool DebugEnabled { get { return DebugMode != null && DebugMode.Value; } }
+
+        private static readonly string[] CriticalPatches = { "Patch_BuildSeparateSongUI" };
+        private const string KROKMP_GUID = "CasualtiesMP";
+        internal static bool KrokMPInstalled { get { return Chainloader.PluginInfos.ContainsKey(KROKMP_GUID); } }
+        internal static bool Active { get { return Net.IsRunning; } }
+        public void Awake() {
+            Log = Logger;
+            Instance = this;
+            if (!KrokMPInstalled) {
+                Log.LogWarning("mp3client: CasualtiesMP is not installed, MP3Client is off.");
+                enabled = false;
+                return;
+            }
+            try {
+                AwakeCore();
+            } catch (Exception e) {
+                CrashLog.Capture("awake", e);
+                StartupGuard.Fail(Log, e.GetType().Name + ": " + e.Message);
+            }
+        }
+        private void AwakeCore() {
+            DebugMode = Config.Bind("General", "Debug", false, "Active debug mode.");
+            AutoLoadMusic = Config.Bind("General", "AutoLoadMusic", false, "Bypass pending system.");
+            AutoRequestMusic = Config.Bind("General", "AutoRequestMusic", true, "Auto pending when creating a server.");
+            UIOnTop = Config.Bind("UI", "UIOnTop", false, "Stick your UI to the ceiling.");
+            ColoredButtons = Config.Bind("UI", "ColoredButtons", false, "Give Stop, Pause buttons red, orange background tints.");
+            UIVerticalOffset = Config.Bind("UI", "UIVerticalOffset", 80f, "Shifts the menu downward. Should only be used if your UI is broken.");
+            Updater.BindConfig(Config);
+            TryUpgradeDebugLogger();
+            Updater.EnsureOriginalBackup(Log);
+            StartupGuard.Begin(Log);
+            Updater.ApplyPendingIfAny(Log);
+            Updater.CleanupLeftovers(Log);
+            Updater.ApplyRevertRequestAtStartup(Log);
+            if (StartupGuard.SafeMode) {
+                Log.LogError("mp3client: safe mode, the features are switched off for this launch while the earlier version is restored.");
+                StartCoroutine(DeferredRegisterCommands());
+                StartCoroutine(Updater.ShowNotice(Log, StartupGuard.Notice));
+                return;
+            }
+            DecoderHandler.SweepTempFiles(true);
+            OpusFailure.Preflight();
+            var harmony = new Harmony("mp3client");
+            foreach (Type patchType in AccessTools.GetTypesFromAssembly(typeof(MP3TogetherDebug).Assembly)) {
+                try {
+                    harmony.CreateClassProcessor(patchType).Patch();
+                } catch (Exception e) {
+                    CrashLog.Capture("patch " + patchType.Name, e);
+                    if (Array.IndexOf(CriticalPatches, patchType.Name) >= 0) StartupGuard.Fail(Log, "patch " + patchType.Name + " failed");
+                }
+            }
+            LogPatchedMethods(harmony);
+            MissingFiles.CheckStartup();
+            if (StartupGuard.SafeMode) {
+                Log.LogError("mp3client: safe mode, a core patch failed and the earlier version is being restored.");
+                StartCoroutine(DeferredRegisterCommands());
+                StartCoroutine(Updater.ShowNotice(Log, StartupGuard.Notice));
+                return;
+            }
+            StartCoroutine(Updater.CheckForUpdate(Log));
+            StartCoroutine(DeferredRegisterCommands());
+            StartCoroutine(StartupGuard.ConfirmHealthy(Log));
+        }
+        private static void LogPatchedMethods(Harmony harmony) {
+            MP3TogetherDebug.Debug.PatchedMethodsSummary(harmony.GetPatchedMethods().ToList());
+        }
+        private IEnumerator DeferredRegisterCommands() {
+            while (!SceneManager.GetActiveScene().isLoaded) yield return null;
+            yield return null;
+            try {
+                UpdaterCommands.RegisterAll();
+            } catch (Exception e) {
+                CrashLog.Capture("updater commands", e);
+            }
+            if (StartupGuard.SafeMode) yield break;
+            NetHandlers.RegisterOnce();
+            TryRegisterCommands();
+        }
+        private static void TryUpgradeDebugLogger() {
+            if (!DebugEnabled) return;
+            var richType = Type.GetType("MP3Client.MP3ClientDebug");
+            if (richType == null || !typeof(MP3ClientLog).IsAssignableFrom(richType)) return;
+            try {
+                Debug = (MP3ClientLog)Activator.CreateInstance(richType);
+            } catch (Exception e) {
+                Log.LogWarning("mp3client: optional debug logger present but failed to load: " + e.Message);
+            }
+        }
+        internal static void TryRegisterCommands() {
+            var cmdType = Type.GetType("MP3Client.MP3ClientCommands");
+            if (cmdType == null) return;
+            var register = cmdType.GetMethod("RegisterAll", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (register == null) return;
+            try {
+                register.Invoke(null, null);
+            } catch (Exception e) {
+                Log.LogWarning("mp3client: optional console commands present but failed to register: " + e.Message);
+            }
+        }
+        internal static void PostHudOnlyStatus(string msg) {
+            Multiplayer.multiplayerStatusMessage = msg;
+            Multiplayer.lastMultiplayerStatusMessageChangeTime = Time.realtimeSinceStartupAsDouble;
+        }
+        private static bool wasNetworkRunning;
+        public void Update() {
+            if (StartupGuard.SafeMode) return;
+            Action a;
+            while (mainThreadQueue.TryDequeue(out a)) Guard.Run("main thread action", a);
+            bool nowRunning = Net.IsRunning;
+            if (nowRunning && !wasNetworkRunning) {
+                wasNetworkRunning = true;
+                Guard.Run("session start", delegate () {
+                    HeadlessMusicLoader.ResetMusicStatics();
+                    ResetPerSessionState();
+                });
+            } else if (!nowRunning && wasNetworkRunning) {
+                wasNetworkRunning = false;
+                Guard.Run("session end", delegate () {
+                    HeadlessMusicLoader.ResetMusicStatics();
+                    Debug.SessionEnded("network stopped");
+                });
+            }
+            if (Time.unscaledTime >= nextSweep) {
+                nextSweep = Time.unscaledTime + Protocol.SWEEP_INTERVAL_SECONDS;
+                if (nowRunning && Net.IsServer) Guard.Run("idle transfer sweep", Patch_RegisterServerReceivers.SweepIdle);
+                Guard.Run("clip sweep", HostPlayback.Sweep);
+            }
+        }
+        public void OnDestroy() {
+            Debug.SessionEnded("plugin destroyed");
+        }
+        private static void ResetPerSessionState() {
+            Debug.Trace("ResetPerSessionState", "new session detected (network_system_is_running false->true) - resetting per-session gate/approval/UI-detection state so it doesn't carry over from a previous session in the same game process");
+            HeadlessMusicLoader.ResetForNewSession();
+            HostPluginCheck.ResetForNewSession();
+            Patch_RegisterServerReceivers.ResetForNewSession();
+            Patch_BuildSeparateSongUI.ResetForNewSession();
+            Patch_GateNativeMusicListRequest.ResetForNewSession();
+            HostPlayback.Reset();
+            LocalLibraryUI.ResetForNewSession();
+            Patch_RegisterClientReceivers.ResetForNewSession();
+            Debug.SessionStarted();
+            OpusFailure.ReportSessionStart();
+            if (Net.IsServer) {
+                HeadlessMusicLoader.EnsureBaseGamePopulated();
+                if (AutoLoadMusic.Value) {
+                    Log.LogInfo("mp3client: AutoLoadMusic is on - loading device folder music without a prompt");
+                    HeadlessMusicLoader.EnsureDeviceFolderPopulated();
+                } else {
+                    SendPendingRequest(true);
+                }
+            }
+        }
+        internal static void SendPendingRequest(bool automatic) {
+            if (Net.IsServer) {
+                if (automatic && !AutoRequestMusic.Value) {
+                    Log.LogInfo("mp3client: host self launch-trigger skipped - AutoRequestMusic is off");
+                    return;
+                }
+                Log.LogInfo("mp3client: host self-triggered load, automatic=" + automatic);
+                Patch_RegisterServerReceivers.Server_HandleLoadRequest(null);
+            } else {
+                Log.LogInfo("mp3client: sending pending request to host, automatic=" + automatic);
+                var writer = Protocol.Writer(Protocol.MSG_ASK_LOAD);
+                writer.Put(automatic);
+                var dm = DeliveryMethod.ReliableOrdered;
+                Net.Client_Send(in dm, in writer);
+            }
+        }
+        internal static void DumpState() {
+            Debug.StateDump(
+                Net.IsRunning,
+                Net.IsServer,
+                Net.IsClient,
+                AutoLoadMusic.Value,
+                AutoRequestMusic.Value,
+                UIVerticalOffset.Value,
+                UIOnTop.Value,
+                ColoredButtons.Value,
+                HostPluginCheck.CurrentStatus.ToString(),
+                Patch_RegisterServerReceivers.pendingActive,
+                Patch_RegisterServerReceivers.pendingRequester.HasValue ? Patch_RegisterServerReceivers.pendingRequester.Value.ToString() : "none",
+                CustomMusicFolder.GetPath(),
+                CustomMusicFolder.Scan().Count,
+                LocalLibraryUI.HostGatedControls.Count,
+                LocalLibraryUI.CurrentLibDropdown != null,
+                HeadlessMusicLoader.DeviceFolderLoadTriggered,
+                wasNetworkRunning
+            );
+        }
+        internal static void RunOnMainThread(Action a) {
+            mainThreadQueue.Enqueue(a);
+        }
+    }
+}
