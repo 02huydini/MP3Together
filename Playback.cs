@@ -1,11 +1,12 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 using Together;
 
-namespace MP3Client {
+namespace MP3Together {
     internal static class HostPlayback {
         internal enum SwapResult { NoPreview, Swapped, Replaced }
         private class Track {
@@ -38,11 +39,24 @@ namespace MP3Client {
             if (t.Owned == null) return;
             UnityEngine.Object.Destroy(t.Owned);
             t.Owned = null;
-            MP3TogetherDebug.Debug.ClipFreed(syncId, why);
+            MP3TogetherPlugin.Debug.ClipFreed(syncId, why);
         }
         private static void KeepOwned(Track t, AudioClip clip, ushort syncId) {
             if (t.Owned != null && t.Owned != clip) FreeOwned(t, "replaced by a newer clip", syncId);
             t.Owned = clip;
+        }
+        internal static int FreeFinished() {
+            int freed = 0;
+            foreach (var kv in tracks) {
+                var t = kv.Value;
+                if (t.Owned == null || t.Paused || t.PreviewSeq != 0) continue;
+                var src = GetSource(GetStreamer(kv.Key));
+                if (src == null || src.isPlaying || src.clip != t.Owned || src.time > 0.01f) continue;
+                src.clip = null;
+                FreeOwned(t, "cleaned up, the song is finished or stopped", kv.Key);
+                freed++;
+            }
+            return freed;
         }
         internal static void Sweep() {
             List<ushort> gone = null;
@@ -142,12 +156,12 @@ namespace MP3Client {
             if (t.Paused) {
                 t.PausedAt = resumeAt;
                 t.PausedClip = full;
-                MP3TogetherDebug.Debug.SwapDone(syncId, resumeAt, true);
+                MP3TogetherPlugin.Debug.SwapDone(syncId, resumeAt, true);
                 return SwapResult.Swapped;
             }
             src.time = resumeAt;
             src.Play();
-            MP3TogetherDebug.Debug.SwapDone(syncId, resumeAt, false);
+            MP3TogetherPlugin.Debug.SwapDone(syncId, resumeAt, false);
             return SwapResult.Swapped;
         }
         internal static bool IsPreviewOf(ushort syncId, int seq) {
@@ -171,7 +185,7 @@ namespace MP3Client {
                 src.clip = null;
                 FreeOwned(t, "stopped", syncId);
             }
-            MP3TogetherDebug.Debug.Trace("HostPlayback.StopAudio", "stopped syncId=" + syncId);
+            MP3TogetherPlugin.Debug.Trace("HostPlayback.StopAudio", "stopped syncId=" + syncId);
         }
         internal static void TogglePause(ushort syncId) {
             var streamer = GetStreamer(syncId);
@@ -184,13 +198,68 @@ namespace MP3Client {
                 ClearQueues(streamer);
                 src.time = Mathf.Clamp(t.PausedAt, 0f, Mathf.Max(0f, src.clip.length - 0.05f));
                 src.Play();
-                MP3TogetherDebug.Debug.Trace("HostPlayback.TogglePause", "resumed syncId=" + syncId + " from " + t.PausedAt.ToString("F2") + "s");
+                MP3TogetherPlugin.Debug.Trace("HostPlayback.TogglePause", "resumed syncId=" + syncId + " from " + t.PausedAt.ToString("F2") + "s");
             } else if (src.isPlaying) {
                 t.PausedAt = src.time;
                 t.PausedClip = src.clip;
                 t.Paused = true;
                 src.Stop();
-                MP3TogetherDebug.Debug.Trace("HostPlayback.TogglePause", "paused syncId=" + syncId + " at " + t.PausedAt.ToString("F2") + "s");
+                MP3TogetherPlugin.Debug.Trace("HostPlayback.TogglePause", "paused syncId=" + syncId + " at " + t.PausedAt.ToString("F2") + "s");
+            }
+        }
+    }
+    internal static class LocalPlayback {
+        private static readonly FieldInfo sourceField = AccessTools.Field(typeof(MusicManager), "source");
+        private static Coroutine loading;
+        private static int loadSeq;
+        private static bool paused;
+        private static AudioSource GetSource() {
+            var mm = MusicManager.main;
+            return mm != null && sourceField != null ? sourceField.GetValue(mm) as AudioSource : null;
+        }
+        internal static void CancelLoad() {
+            loadSeq++;
+            if (loading != null) {
+                MP3TogetherPlugin.Instance.StopCoroutine(loading);
+                loading = null;
+            }
+        }
+        internal static void Load(string path, string ext) {
+            CancelLoad();
+            loading = MP3TogetherPlugin.Instance.StartCoroutine(LoadRoutine(path, ext, loadSeq));
+        }
+        private static IEnumerator LoadRoutine(string path, string ext, int seq) {
+            int index = -1;
+            string error = null;
+            yield return HeadlessMusicLoader.LoadOne(path, ext, delegate (int i) { index = i; }, delegate (string e) { error = e; });
+            if (seq != loadSeq) yield break;
+            loading = null;
+            if (index < 0) {
+                Msg.Error("mp3together: couldn't load " + System.IO.Path.GetFileName(path) + ": " + error);
+                LocalLibraryUI.SetSongActive(false);
+                yield break;
+            }
+            paused = false;
+            LocalLibraryUI.SelectLoaded(index);
+            LocalLibraryUI.PlayBaseIndex(index);
+            Msg.Log("mp3together: loaded and playing " + System.IO.Path.GetFileName(path) + ".");
+        }
+        internal static void Stop() {
+            CancelLoad();
+            paused = false;
+            var mm = MusicManager.main;
+            if (mm != null) mm.StopSong();
+        }
+        internal static void TogglePause() {
+            var src = GetSource();
+            if (src == null || src.clip == null) return;
+            if (paused && src.isPlaying) paused = false;
+            if (paused) {
+                paused = false;
+                src.UnPause();
+            } else if (src.isPlaying) {
+                paused = true;
+                src.Pause();
             }
         }
     }

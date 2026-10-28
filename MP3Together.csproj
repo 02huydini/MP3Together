@@ -1,83 +1,100 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
-    <LangVersion>12.0</LangVersion>
-    <AssemblyName>MP3Together</AssemblyName>
-    <RootNamespace>MP3Together</RootNamespace>
-    <Deterministic>true</Deterministic>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
-  </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="0Harmony">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\core\0Harmony.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Assembly-CSharp">
-      <HintPath>..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\Assembly-CSharp.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="BepInEx">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\core\BepInEx.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="CasualtiesMP">
-      <HintPath>..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\Together\CasualtiesMP.dll</HintPath>
-    </Reference>
-    <Reference Include="LiteEntitySystem">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\Together\LiteEntitySystem.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="LiteNetLib">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\Together\LiteNetLib.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.AudioModule">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.AudioModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.UnityWebRequestAudioModule">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.UnityWebRequestAudioModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.UnityWebRequestModule">
-      <HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
-  <ItemGroup>
-    <Compile Include="DecoderHandler.cs" />
-    <Compile Include="MP3Together.cs" />
-    <Compile Include="ErrorHandling.cs" />
-    <Compile Include="Playback.cs" />
-    <Compile Include="MP3TogetherDebug.cs" />
-    <Compile Include="Requests.cs" />
-    <Compile Include="Shared.cs" />
-    <Compile Include="UI.cs" />
-    <Compile Include="Updater.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="Sprites\BrowseIcon.png" />
-    <EmbeddedResource Include="Sprites\PauseIcon.png" />
-    <EmbeddedResource Include="Sprites\StopIcon.png" />
-  </ItemGroup>
-  <Target Name="CopyToPlugins" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="D:\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="D:\Program\Steam\steamapps\common\Casualties Unknown Demo - Copy\BepInEx\plugins\" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="D:\Program\Steam\steamapps\common\Casualties Unknown Demo - Copy (2)\BepInEx\plugins\" />
-  </Target>
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>netstandard2.1</TargetFramework>
+		<LangVersion>12.0</LangVersion>
+		<AssemblyName>MP3Together</AssemblyName>
+		<RootNamespace>MP3Together</RootNamespace>
+		<Deterministic>true</Deterministic>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+		<EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+	</PropertyGroup>
+	<ItemGroup>
+	  <None Remove=".gitignore" />
+	  <None Remove="preview.png" />
+	</ItemGroup>
+	<ItemGroup>
+		<Reference Include="0Harmony">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\core\0Harmony.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="Assembly-CSharp">
+			<HintPath>..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\Assembly-CSharp.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="BepInEx">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\core\BepInEx.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="CasualtiesMP">
+			<HintPath>..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\Together\CasualtiesMP.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="LiteEntitySystem">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\Together\LiteEntitySystem.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="LiteNetLib">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\Together\LiteNetLib.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.AudioModule">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.AudioModule.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.CoreModule">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.TextRenderingModule">
+			<HintPath>..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="Unity.TextMeshPro">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.UI">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.UI.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.UIModule">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.UnityWebRequestAudioModule">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.UnityWebRequestAudioModule.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="UnityEngine.UnityWebRequestModule">
+			<HintPath>..\..\..\..\..\..\Program\Steam\steamapps\common\Casualties Unknown Demo\CasualtiesUnknown_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+	</ItemGroup>
+	<ItemGroup>
+		<Compile Include="DecoderHandler.cs" />
+		<Compile Include="MP3Together.cs" />
+		<Compile Include="ErrorHandler.cs" />
+		<Compile Include="Playback.cs" />
+		<Compile Include="MP3TogetherDebug.cs" />
+		<Compile Include="Requests.cs" />
+		<Compile Include="Shared.cs" />
+		<Compile Include="VolumeBars.cs" />
+		<Compile Include="UI.cs" />
+		<Compile Include="Updater.cs" />
+		<Compile Include="Properties\AssemblyInfo.cs" />
+	</ItemGroup>
+	<ItemGroup>
+		<EmbeddedResource Include="Sprites\BrowseIcon.png" />
+		<EmbeddedResource Include="Sprites\PauseIcon.png" />
+		<EmbeddedResource Include="Sprites\StopIcon.png" />
+	</ItemGroup>
+	<Target Name="CopyToPlugins" AfterTargets="Build">
+		<Copy SourceFiles="$(TargetPath)" DestinationFolder="D:\Program\Steam\steamapps\common\Casualties Unknown Demo\BepInEx\plugins\MP3Together" />
+		<Copy SourceFiles="$(TargetPath)" DestinationFolder="D:\Program\Steam\steamapps\common\Casualties Unknown Demo - Copy\BepInEx\plugins\MP3Together" />
+	</Target>
 </Project>
