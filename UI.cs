@@ -2,7 +2,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using MP3Client;
+using MP3Together;
 internal static class Program {
     private static int failures;
     private static void Check(bool ok, string name) {
@@ -101,7 +101,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using Together;
 
-namespace MP3Client {
+namespace MP3Together {
     [HarmonyPatch]
     internal static class Patch_BuildSeparateSongUI {
         private static readonly ConditionalWeakTable<object, object> builtFor = new ConditionalWeakTable<object, object>();
@@ -126,9 +126,9 @@ namespace MP3Client {
                 add.Invoke(dropdown, new object[] { list });
                 int restored = previous < ilist.Count ? previous : 0;
                 ReflectionHelpers.CallMethod(dropdown, "SetValueWithoutNotify", new[] { typeof(int) }, new object[] { restored });
-                MP3TogetherDebug.Debug.UIState("RefreshOpenMenuDropdown", "open MP3 menu dropdown refreshed, " + ilist.Count + " options");
+                MP3TogetherPlugin.Debug.UIState("RefreshOpenMenuDropdown", "open MP3 menu dropdown refreshed, " + ilist.Count + " options");
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogWarning("mp3client: RefreshOpenMenuDropdown failed: " + e.Message);
+                MP3TogetherPlugin.Log.LogWarning("mp3together: RefreshOpenMenuDropdown failed: " + e.Message);
             }
         }
         static MethodBase TargetMethod() {
@@ -139,35 +139,32 @@ namespace MP3Client {
             Guard.Run("Patch_BuildSeparateSongUI.Postfix", delegate () { PostfixCore(__instance); });
         }
         static void PostfixCore(object __instance) {
-            if (!MP3TogetherDebug.Active) return;
-            MP3TogetherDebug.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "UpdateList returned for instance=" + __instance.GetHashCode() + " is_server=" + Net.IsServer + " is_client=" + Net.IsClient);
+            MP3TogetherPlugin.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "UpdateList returned for instance=" + __instance.GetHashCode() + " krok=" + Krok.Installed + " is_server=" + Krok.IsServer + " is_client=" + Krok.IsClient);
             LastMp3MenuInstance = new WeakReference(__instance);
-            if (Net.IsServer && Net.IsRunning && !MP3TogetherDebug.AutoLoadMusic.Value && !HeadlessMusicLoader.DeviceFolderLoadTriggered && !Patch_RegisterServerReceivers.pendingActive) {
-                MP3TogetherDebug.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "host opened the menu with device folder music not yet approved - auto-firing the pending-request prompt");
-                Patch_RegisterServerReceivers.Server_HandleLoadRequest(null);
-            }
+            if (Krok.Installed) KrokBridge.NoteUsedPlayer();
+            if (Krok.Installed) KrokBridge.OnMenuOpened();
             object marker;
             if (builtFor.TryGetValue(__instance, out marker)) {
-                MP3TogetherDebug.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "instance=" + __instance.GetHashCode() + " already built, skipping");
+                MP3TogetherPlugin.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "instance=" + __instance.GetHashCode() + " already built, skipping");
                 return;
             }
-            MP3TogetherDebug.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "instance=" + __instance.GetHashCode() + " starting DeferredBuild");
-            MP3TogetherDebug.Instance.StartCoroutine(DeferredBuild(__instance));
+            MP3TogetherPlugin.Debug.Trace("Patch_BuildSeparateSongUI.Postfix", "instance=" + __instance.GetHashCode() + " starting DeferredBuild");
+            MP3TogetherPlugin.Instance.StartCoroutine(DeferredBuild(__instance));
         }
         static IEnumerator DeferredBuild(object mp3MenuInstance) {
-            MP3TogetherDebug.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " started, looking up 'dropdown' field");
+            MP3TogetherPlugin.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " started, looking up 'dropdown' field");
             object dropdown = null;
             try {
                 dropdown = ReflectionHelpers.GetMember(mp3MenuInstance, "dropdown");
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogError("mp3client: 'dropdown' field lookup failed: " + e);
+                MP3TogetherPlugin.Log.LogError("mp3together: 'dropdown' field lookup failed: " + e);
                 yield break;
             }
             if (dropdown == null) {
-                MP3TogetherDebug.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " 'dropdown' field is null, giving up");
+                MP3TogetherPlugin.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " 'dropdown' field is null, giving up");
                 yield break;
             }
-            MP3TogetherDebug.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " dropdown found, waiting up to 5s for options to populate");
+            MP3TogetherPlugin.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " dropdown found, waiting up to 5s for options to populate");
             float deadline = Time.unscaledTime + 5f;
             System.Collections.IList options = null;
             while (Time.unscaledTime < deadline) {
@@ -176,16 +173,16 @@ namespace MP3Client {
                 yield return null;
             }
             if (options == null || options.Count == 0) {
-                MP3TogetherDebug.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " gave up after 5s, options never populated (options=" + (options == null ? "null" : "count 0") + ")");
+                MP3TogetherPlugin.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " gave up after 5s, options never populated (options=" + (options == null ? "null" : "count 0") + ")");
                 yield break;
             }
-            MP3TogetherDebug.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " options populated (count=" + options.Count + "), calling LocalLibraryUI.Build");
+            MP3TogetherPlugin.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " options populated (count=" + options.Count + "), calling LocalLibraryUI.Build");
             try {
                 LocalLibraryUI.Build(mp3MenuInstance, (Component)dropdown);
                 builtFor.Add(mp3MenuInstance, new object());
-                MP3TogetherDebug.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " LocalLibraryUI.Build completed without throwing");
+                MP3TogetherPlugin.Debug.Trace("DeferredBuild", "instance=" + mp3MenuInstance.GetHashCode() + " LocalLibraryUI.Build completed without throwing");
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogError("mp3client: Patch_BuildSeparateSongUI failed: " + e);
+                MP3TogetherPlugin.Log.LogError("mp3together: Patch_BuildSeparateSongUI failed: " + e);
             }
         }
     }
@@ -199,8 +196,7 @@ namespace MP3Client {
             Guard.Run("MP3Menu.Exit.Prefix", delegate () { PrefixCore(__instance); });
         }
         static void PrefixCore(object __instance) {
-            if (!MP3TogetherDebug.Active) return;
-            MP3TogetherDebug.Debug.Trace("MP3Menu.Exit", "instance=" + __instance.GetHashCode() + " is_server=" + Net.IsServer + " is_client=" + Net.IsClient);
+            MP3TogetherPlugin.Debug.Trace("MP3Menu.Exit", "instance=" + __instance.GetHashCode() + " is_server=" + Krok.IsServer + " is_client=" + Krok.IsClient);
         }
     }
     [HarmonyPatch]
@@ -213,23 +209,21 @@ namespace MP3Client {
             Guard.Run("MP3Menu.Start.Prefix", delegate () { PrefixCore(__instance); });
         }
         static void PrefixCore(object __instance) {
-            if (!MP3TogetherDebug.Active) return;
-            MP3TogetherDebug.Debug.Trace("MP3Menu.Start", "instance=" + __instance.GetHashCode() + " is_server=" + Net.IsServer + " is_client=" + Net.IsClient + " network_system_is_running=" + Net.IsRunning);
+            MP3TogetherPlugin.Debug.Trace("MP3Menu.Start", "instance=" + __instance.GetHashCode() + " is_server=" + Krok.IsServer + " is_client=" + Krok.IsClient + " network_system_is_running=" + Krok.IsRunning);
         }
         static void Postfix(object __instance) {
             Guard.Run("MP3Menu.Start.Postfix", delegate () { PostfixCore(__instance); });
         }
         static void PostfixCore(object __instance) {
-            if (!MP3TogetherDebug.Active) return;
             var dropdown = ReflectionHelpers.GetMember(__instance, "dropdown");
             var options = dropdown != null ? ReflectionHelpers.GetMember(dropdown, "options") as System.Collections.IList : null;
-            MP3TogetherDebug.Debug.Trace("MP3Menu.Start", "instance=" + __instance.GetHashCode() + " finished, dropdown=" + (dropdown != null ? "found" : "NULL") + " options.count=" + (options != null ? options.Count.ToString() : "n/a"));
+            MP3TogetherPlugin.Debug.Trace("MP3Menu.Start", "instance=" + __instance.GetHashCode() + " finished, dropdown=" + (dropdown != null ? "found" : "NULL") + " options.count=" + (options != null ? options.Count.ToString() : "n/a"));
         }
     }
     internal static class LocalLibraryUI {
         internal static bool LocalIsSelected;
-        private const string LibraryDropdownName = "MP3Client_LibraryDropdown";
-        private const string BrowseButtonName = "MP3Client_BrowseButton";
+        private const string LibraryDropdownName = "MP3Together_LibraryDropdown";
+        private const string BrowseButtonName = "MP3Together_BrowseButton";
         private static readonly ConditionalWeakTable<object, object> libraryDropdownFor = new ConditionalWeakTable<object, object>();
         private static readonly ConditionalWeakTable<object, string> selectedSongFor = new ConditionalWeakTable<object, string>();
         private static readonly ConditionalWeakTable<object, string> lastSourceFor = new ConditionalWeakTable<object, string>();
@@ -239,6 +233,7 @@ namespace MP3Client {
         private static object lastActiveInstanceKey;
         internal static readonly List<object> HostGatedControls = new List<object>();
         private static List<string> cachedSongs = new List<string>();
+        private static readonly List<string> browsedSongs = new List<string>();
         internal static object CurrentLibDropdown;
         internal static bool SongActive;
         private static WeakReference currentMenu;
@@ -262,7 +257,7 @@ namespace MP3Client {
         internal static void SetPauseInteractable(object mp3MenuInstance, bool interactable) {
             object pauseButtonComponent;
             if (!pauseButtonFor.TryGetValue(mp3MenuInstance, out pauseButtonComponent)) return;
-            bool allowed = interactable && HostPluginCheck.CurrentStatus == HostPluginCheck.Status.Confirmed;
+            bool allowed = interactable && (!Krok.IsClient || HostPluginCheck.CurrentStatus == HostPluginCheck.Status.Confirmed);
             try { ReflectionHelpers.SetMember(pauseButtonComponent, "interactable", allowed); } catch { }
         }
         internal static void SetHostGateEnabled(bool enabled) {
@@ -274,11 +269,15 @@ namespace MP3Client {
         internal static void SetDropdownHostMissingText(object libDropdown, bool missing) {
             if (libDropdown == null) return;
             if (missing) {
-                SetDropdownSingleMessage(libDropdown, "Host doesn't have MP3Client plugin");
+                SetDropdownSingleMessage(libDropdown, "Host doesn't have MP3Together plugin");
             } else {
-                RefreshLibraryOptions(libDropdown);
-                try { ReflectionHelpers.SetMember(libDropdown, "interactable", true); } catch { }
+                EnableLibraryDropdown(libDropdown);
             }
+        }
+        internal static void EnableLibraryDropdown(object libDropdown) {
+            if (libDropdown == null) return;
+            RefreshLibraryOptions(libDropdown);
+            try { ReflectionHelpers.SetMember(libDropdown, "interactable", true); } catch { }
         }
         internal static void SetDropdownSingleMessage(object libDropdown, string message) {
             if (libDropdown == null) return;
@@ -286,12 +285,6 @@ namespace MP3Client {
             ReflectionHelpers.CallMethod(libDropdown, "AddOptions", new[] { typeof(List<string>) }, new object[] { new List<string> { message } });
             ReflectionHelpers.CallMethod(libDropdown, "SetValueWithoutNotify", new[] { typeof(int) }, new object[] { 0 });
             try { ReflectionHelpers.SetMember(libDropdown, "interactable", false); } catch { }
-        }
-        internal static void SetDropdownLocalIsHostText(object libDropdown) {
-            SetDropdownSingleMessage(libDropdown, "This dropdown is for Client");
-        }
-        internal static void SetDropdownNoServerText(object libDropdown) {
-            SetDropdownSingleMessage(libDropdown, "This dropdown only available in server");
         }
         public static void BeginSend(object mp3MenuInstance) {
             CancelActive(mp3MenuInstance);
@@ -312,7 +305,7 @@ namespace MP3Client {
         public static void CancelActive(object mp3MenuInstance) {
             ActiveTransfer existing;
             if (!activeTransferFor.TryGetValue(mp3MenuInstance, out existing)) return;
-            if (existing.Routine != null) MP3TogetherDebug.Instance.StopCoroutine(existing.Routine);
+            if (existing.Routine != null) MP3TogetherPlugin.Instance.StopCoroutine(existing.Routine);
             Patch_InterceptBrowsePlay.StopResend(existing.SyncId);
             Patch_InterceptBrowsePlay.SendCancel(existing.SyncId);
             Patch_InterceptBrowsePlay.ForgetPending(existing.SyncId);
@@ -324,11 +317,20 @@ namespace MP3Client {
             if (instance == null) return false;
             ActiveTransfer existing;
             if (!activeTransferFor.TryGetValue(instance, out existing) || existing.SyncId != syncId) return false;
-            if (existing.Routine != null) MP3TogetherDebug.Instance.StopCoroutine(existing.Routine);
+            if (existing.Routine != null) MP3TogetherPlugin.Instance.StopCoroutine(existing.Routine);
             Patch_InterceptBrowsePlay.StopResend(syncId);
             Patch_InterceptBrowsePlay.ForgetPending(syncId);
             activeTransferFor.Remove(instance);
             SetPauseInteractable(instance, SongActive);
+            return true;
+        }
+        internal static bool TryGetActiveSyncId(out ushort syncId) {
+            syncId = 0;
+            object instance = lastActiveInstanceKey;
+            if (instance == null) return false;
+            ActiveTransfer existing;
+            if (!activeTransferFor.TryGetValue(instance, out existing)) return false;
+            syncId = existing.SyncId;
             return true;
         }
         public static bool CancelActiveGlobal() {
@@ -340,31 +342,45 @@ namespace MP3Client {
             return true;
         }
         internal static void StopOrCancel() {
+            if (!Krok.IsClient) {
+                LocalPlayback.CancelLoad();
+                if (Krok.IsServer) KrokBridge.HostStop();
+                else LocalPlayback.Stop();
+                SetSongActive(false);
+                Msg.Log("mp3together: Stop - stopped playback.");
+                return;
+            }
             bool cancelled = CancelActiveGlobal();
             ushort playerSyncId;
             bool haveId = Patch_InterceptBrowsePlay.TryGetCurrentPlayerSyncId(out playerSyncId);
             if (haveId) Patch_InterceptBrowsePlay.StopResend(playerSyncId);
             if (!cancelled && haveId) Patch_InterceptBrowsePlay.SendCancel(playerSyncId);
             SetSongActive(false);
-            Multiplayer.DoMultiplayerStatusMessageLog(cancelled ? "mp3client: Stop - dropped current transfer." : "mp3client: Stop - asked host to stop playback.");
+            Msg.Log(cancelled ? "mp3together: Stop - dropped current transfer." : "mp3together: Stop - asked host to stop playback.");
         }
         private static void OnStopButtonClicked() {
             StopOrCancel();
         }
         internal static void OnPauseButtonClicked() {
+            if (!Krok.IsClient) {
+                if (Krok.IsServer) KrokBridge.HostTogglePause();
+                else LocalPlayback.TogglePause();
+                Msg.Log("mp3together: MP3pause - toggled pause.");
+                return;
+            }
             ushort playerSyncId;
             if (Patch_InterceptBrowsePlay.TryGetCurrentPlayerSyncId(out playerSyncId)) {
                 Patch_InterceptBrowsePlay.SendPause(playerSyncId);
-                Multiplayer.DoMultiplayerStatusMessageLog("mp3client: MP3pause - sent pause/resume toggle.");
+                Msg.Log("mp3together: MP3pause - sent pause/resume toggle.");
             }
         }
         public static void Build(object mp3MenuInstance, Component originalDropdown) {
-            MP3TogetherDebug.Debug.UIState("Build", "building MP3Client UI onto the MP3 menu, instance=" + mp3MenuInstance.GetHashCode());
+            MP3TogetherPlugin.Debug.UIState("Build", "building MP3Together UI onto the MP3 menu, instance=" + mp3MenuInstance.GetHashCode());
             HostGatedControls.Clear();
             currentMenu = new WeakReference(mp3MenuInstance);
             Transform parent = originalDropdown.transform.parent != null ? originalDropdown.transform.parent : originalDropdown.transform;
             var origRect = originalDropdown.GetComponent<RectTransform>();
-            MP3TogetherDebug.Debug.UIState("Build", "parent=" + parent.name + " origRect=" + (origRect != null ? origRect.rect.ToString() : "null"));
+            MP3TogetherPlugin.Debug.UIState("Build", "parent=" + parent.name + " origRect=" + (origRect != null ? origRect.rect.ToString() : "null"));
             float rowHeight = origRect != null ? origRect.rect.height + 4f : 34f;
             GameObject libraryGO = UnityEngine.Object.Instantiate(originalDropdown.gameObject, parent, false);
             libraryGO.name = LibraryDropdownName;
@@ -376,15 +392,15 @@ namespace MP3Client {
             libraryDropdownFor.Add(mp3MenuInstance, libDropdown);
             CurrentLibDropdown = libDropdown;
             int optionCount = RefreshLibraryOptions(libDropdown);
-            MP3TogetherDebug.Debug.UIState("Build", "library dropdown cloned and populated, " + optionCount + " options (including placeholder)");
+            MP3TogetherPlugin.Debug.UIState("Build", "library dropdown cloned and populated, " + optionCount + " options (including placeholder)");
             HookValueChanged(libDropdown, originalDropdown, mp3MenuInstance);
             HookBaseDropdownValueChanged(originalDropdown, libDropdown, mp3MenuInstance);
             var panel = FindPanel(originalDropdown.transform);
-            MP3TogetherDebug.Debug.UIState("Build", "FindPanel result: " + (panel != null ? panel.name : "null (will use parent as search root)"));
+            MP3TogetherPlugin.Debug.UIState("Build", "FindPanel result: " + (panel != null ? panel.name : "null (will use parent as search root)"));
             var searchRoot = panel != null ? panel : parent;
             var buttonType = UITypes.Button;
             var allButtons = searchRoot.GetComponentsInChildren(buttonType, true);
-            MP3TogetherDebug.Debug.UIState("Build", "searched '" + searchRoot.name + "' for buttons, found " + allButtons.Length + ": [" + string.Join(", ", allButtons.Select(b => b.gameObject.name)) + "]");
+            MP3TogetherPlugin.Debug.UIState("Build", "searched '" + searchRoot.name + "' for buttons, found " + allButtons.Length + ": [" + string.Join(", ", allButtons.Select(b => b.gameObject.name)) + "]");
             Component playButton = null;
             Component exitButton = null;
             foreach (Component c in allButtons) {
@@ -392,10 +408,10 @@ namespace MP3Client {
                 if (playButton == null && n.Contains("play")) playButton = c;
                 if (exitButton == null && n.Contains("exit")) exitButton = c;
             }
-            MP3TogetherDebug.Debug.UIState("Build", "playButton=" + (playButton != null ? playButton.gameObject.name : "NOT FOUND") + " exitButton=" + (exitButton != null ? exitButton.gameObject.name : "NOT FOUND"));
+            MP3TogetherPlugin.Debug.UIState("Build", "playButton=" + (playButton != null ? playButton.gameObject.name : "NOT FOUND") + " exitButton=" + (exitButton != null ? exitButton.gameObject.name : "NOT FOUND"));
 
             if (playButton != null) {
-                MP3TogetherDebug.Debug.UIState("Build", "using row-layout path (Browse/Stop/Pause + Play/Exit)");
+                MP3TogetherPlugin.Debug.UIState("Build", "using row-layout path (Browse/Stop/Pause + Play/Exit)");
                 Component anchorButton = exitButton != null ? exitButton : playButton;
                 var buttons = ButtonTemplates.CreateAll(anchorButton, mp3MenuInstance);
                 GameObject browseGO = buttons.Browse;
@@ -408,19 +424,19 @@ namespace MP3Client {
                 HostGatedControls.Add(stopGO.GetComponent(buttonType));
                 RegisterPauseButton(mp3MenuInstance, pauseGO.GetComponent(buttonType));
             } else {
-                MP3TogetherDebug.Debug.UIState("Build", "using fallback path (no base Play button found in search root)");
+                MP3TogetherPlugin.Debug.UIState("Build", "using fallback path (no base Play button found in search root)");
                 var libRect = libraryGO.GetComponent<RectTransform>();
-                if (libRect != null && origRect != null) libRect.anchoredPosition = origRect.anchoredPosition + new Vector2(0f, -(rowHeight + MP3TogetherDebug.UIVerticalOffset.Value));
-                BuildFallbackRow(mp3MenuInstance, parent, origRect, rowHeight, MP3TogetherDebug.UIVerticalOffset.Value);
-                GrowPanel(panel, rowHeight * 1.5f + MP3TogetherDebug.UIVerticalOffset.Value);
+                if (libRect != null && origRect != null) libRect.anchoredPosition = origRect.anchoredPosition + new Vector2(0f, -(rowHeight + MP3TogetherPlugin.UIVerticalOffset.Value));
+                BuildFallbackRow(mp3MenuInstance, parent, origRect, rowHeight, MP3TogetherPlugin.UIVerticalOffset.Value);
+                GrowPanel(panel, rowHeight * 1.5f + MP3TogetherPlugin.UIVerticalOffset.Value);
             }
             try {
                 HostPluginCheck.EnsureChecked(libDropdown);
-                MP3TogetherDebug.Debug.UIState("Build", "HostPluginCheck.EnsureChecked completed");
+                MP3TogetherPlugin.Debug.UIState("Build", "HostPluginCheck.EnsureChecked completed");
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogError("mp3client: EnsureChecked failed: " + e);
+                MP3TogetherPlugin.Log.LogError("mp3together: EnsureChecked failed: " + e);
             }
-            MP3TogetherDebug.Debug.UIState("Build", "finished, HostGatedControls count=" + HostGatedControls.Count);
+            MP3TogetherPlugin.Debug.UIState("Build", "finished, HostGatedControls count=" + HostGatedControls.Count);
         }
         private static void NeutralizeCompetingLayout(RectTransform rt) {
             if (rt == null) return;
@@ -436,88 +452,87 @@ namespace MP3Client {
             var onClick = ReflectionHelpers.GetMember(newButton, "onClick");
             var addListener = onClick.GetType().GetMethod("AddListener");
             UnityAction handler = () => {
-                MP3TogetherDebug.Debug.Trace("HookPlayButton", "clicked, instance=" + mp3MenuInstance.GetHashCode() + " IsLocalLastSelected=" + LocalLibraryUI.IsLocalLastSelected(mp3MenuInstance));
+                MP3TogetherPlugin.Debug.Trace("HookPlayButton", "clicked, instance=" + mp3MenuInstance.GetHashCode() + " IsLocalLastSelected=" + LocalLibraryUI.IsLocalLastSelected(mp3MenuInstance));
                 if (LocalLibraryUI.IsLocalLastSelected(mp3MenuInstance)) {
                     string path;
                     if (LocalLibraryUI.TryGetStaged(mp3MenuInstance, out path) && !string.IsNullOrEmpty(path)) {
-                        MP3TogetherDebug.Debug.Trace("HookPlayButton", "routing to local staged song: " + path);
-                        Patch_InterceptBrowsePlay.SendStagedSong(mp3MenuInstance, path);
+                        MP3TogetherPlugin.Debug.Trace("HookPlayButton", "routing to local staged song: " + path);
+                        LocalLibraryUI.PlayStaged(mp3MenuInstance, path);
                         return;
                     }
-                    MP3TogetherDebug.Debug.Trace("HookPlayButton", "IsLocalLastSelected true but TryGetStaged failed/empty - falling through to base selection");
+                    MP3TogetherPlugin.Debug.Trace("HookPlayButton", "IsLocalLastSelected true but TryGetStaged failed/empty - falling through to base selection");
                 }
-                MP3TogetherDebug.Debug.Trace("HookPlayButton", "routing to base dropdown selection");
+                MP3TogetherPlugin.Debug.Trace("HookPlayButton", "routing to base dropdown selection");
                 LocalLibraryUI.SetSongActive(true);
                 LocalLibraryUI.PlayBaseSelectionWithoutExit(mp3MenuInstance);
             };
             addListener.Invoke(onClick, new object[] { handler });
         }
+        internal static void SelectLoaded(int index) {
+            object menu = Patch_BuildSeparateSongUI.LastMp3MenuInstance != null ? Patch_BuildSeparateSongUI.LastMp3MenuInstance.Target : null;
+            if (menu == null) return;
+            try {
+                var dropdown = ReflectionHelpers.GetMember(menu, "dropdown");
+                if (dropdown != null) ReflectionHelpers.CallMethod(dropdown, "SetValueWithoutNotify", new[] { typeof(int) }, new object[] { index });
+                lastSourceFor.Remove(menu);
+                lastSourceFor.Add(menu, "base");
+                LocalIsSelected = false;
+            } catch (Exception e) {
+                MP3TogetherPlugin.Log.LogWarning("mp3together: couldn't select the loaded song in the base dropdown: " + e.Message);
+            }
+        }
+        internal static void PlayStaged(object mp3MenuInstance, string path) {
+            if (Krok.IsClient) {
+                Patch_InterceptBrowsePlay.SendStagedSong(mp3MenuInstance, path);
+                return;
+            }
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (!PreviewData.IsAllowedExtension(ext)) {
+                Msg.Error("mp3together: unsupported file type " + ext);
+                return;
+            }
+            if (!File.Exists(path)) {
+                Msg.Error("mp3together: couldn't find " + path);
+                return;
+            }
+            SetSongActive(true);
+            LocalPlayback.Load(path, ext);
+        }
         internal static void PlayBaseSelectionWithoutExit(object mp3MenuInstance) {
             var menuType = UITypes.MP3Menu;
-            bool multiplayerActive = Net.IsRunning && Multiplayer.rules.EnableMP3Sync;
-            bool mpClient = multiplayerActive && Net.IsClient;
+            bool mpClient = Krok.IsRunning && KrokNet.MP3Sync() && Krok.IsClient;
             var loadingField = AccessTools.Field(menuType, "loadingMusic");
             if (!mpClient && loadingField != null && (bool)loadingField.GetValue(null)) {
-                MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "skipped - still loading music");
+                MP3TogetherPlugin.Debug.Trace("PlayBaseSelectionWithoutExit", "skipped - still loading music");
                 return;
             }
             var dropdown = ReflectionHelpers.GetMember(mp3MenuInstance, "dropdown");
-            int index = (int)ReflectionHelpers.GetMember(dropdown, "value");
-            if (multiplayerActive) {
-                var itemField = AccessTools.Field(typeof(MP3Menu_UpdateList_MultiplayerPatch), "last_locally_used_mp3_player");
-                var itemObj = itemField != null ? itemField.GetValue(null) : null;
-                if (itemObj != null) {
-                    if (Net.IsClient) {
-                        SyncInfo syncInfo;
-                        if (NetObjectRegistry.TryGetSyncInfoOrRegister((Component)itemObj, out syncInfo)) {
-                            var writer = Net.CreateWriter((byte)NetmsgId.SERVER_MP3PlayCustomMusic);
-                            writer.Put(index);
-                            writer.Put(syncInfo.syncId);
-                            var dm = DeliveryMethod.ReliableUnordered;
-                            Net.Client_Send(in dm, in writer);
-                            MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "multiplayer client - sent native play-request msg 10137 index=" + index + " syncId=" + syncInfo.syncId);
-                        } else {
-                            MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "multiplayer client - mp3 player not registered, cannot send play request");
-                        }
-                    } else {
-                        var clipsFieldMp = AccessTools.Field(menuType, "clips");
-                        var clipsMp = clipsFieldMp != null ? clipsFieldMp.GetValue(null) as System.Collections.IList : null;
-                        if (clipsMp != null && index >= 0 && index < clipsMp.Count) {
-                            var serverPlayMethod = AccessTools.Method(typeof(MP3Menu_Play_MultiplayerPatch), "Server_PlayThisSongOnThisMp3Player");
-                            if (serverPlayMethod != null) {
-                                serverPlayMethod.Invoke(null, new object[] { clipsMp[index], itemObj });
-                                MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "multiplayer host - played directly via Server_PlayThisSongOnThisMp3Player index=" + index);
-                            } else {
-                                MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "multiplayer host - Server_PlayThisSongOnThisMp3Player method not found");
-                            }
-                        } else {
-                            MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "multiplayer host - clips null or index " + index + " out of range");
-                        }
-                    }
-                    return;
-                }
-                MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "multiplayer active but no known mp3 player instance - falling back to local MusicManager playback");
-            }
+            PlayBaseIndex((int)ReflectionHelpers.GetMember(dropdown, "value"));
+        }
+        internal static void PlayBaseIndex(int index) {
+            var menuType = UITypes.MP3Menu;
+            bool multiplayerActive = Krok.IsRunning && KrokNet.MP3Sync();
+            if (multiplayerActive && KrokBridge.PlayBase(index)) return;
             var clipsField = AccessTools.Field(menuType, "clips");
             var clips = clipsField != null ? clipsField.GetValue(null) as System.Collections.IList : null;
             if (clips == null || index < 0 || index >= clips.Count) {
-                MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "skipped - clips null or index " + index + " out of range");
+                MP3TogetherPlugin.Debug.Trace("PlayBaseIndex", "skipped - clips null or index " + index + " out of range");
                 return;
             }
             var clip = clips[index] as AudioClip;
-            MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "solo/offline - index=" + index + " clip=" + (clip != null ? clip.name : "NULL"));
+            MP3TogetherPlugin.Debug.Trace("PlayBaseIndex", "music manager - index=" + index + " clip=" + (clip != null ? clip.name : "NULL"));
             var musicManagerType = AccessTools.TypeByName("MusicManager");
             var mainField = musicManagerType != null ? AccessTools.Field(musicManagerType, "main") : null;
             var mainInstance = mainField != null ? mainField.GetValue(null) : null;
             var playSongMethod = musicManagerType != null ? AccessTools.Method(musicManagerType, "PlaySong") : null;
             if (mainInstance == null || playSongMethod == null) {
-                MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "skipped - MusicManager.main/PlaySong not found (main=" + (mainInstance != null) + " method=" + (playSongMethod != null) + ")");
+                MP3TogetherPlugin.Debug.Trace("PlayBaseIndex", "skipped - MusicManager.main/PlaySong not found (main=" + (mainInstance != null) + " method=" + (playSongMethod != null) + ")");
                 return;
             }
             playSongMethod.Invoke(mainInstance, new object[] { clip });
-            MP3TogetherDebug.Debug.Trace("PlayBaseSelectionWithoutExit", "PlaySong invoked successfully");
+            MP3TogetherPlugin.Debug.Trace("PlayBaseIndex", "PlaySong invoked successfully");
         }
-        private const string LayoutRootName = "MP3Client_LayoutRoot";
+        private const string LayoutRootName = "MP3Together_LayoutRoot";
         private static GameObject BuildRow(Transform parent, string name, Type hLayoutType, Type layoutElementType, float rowHeight) {
             GameObject row = new GameObject(name, typeof(RectTransform));
             row.transform.SetParent(parent, false);
@@ -544,17 +559,45 @@ namespace MP3Client {
             var existing = go.GetComponent(layoutElementType);
             if (existing != null) UnityEngine.Object.DestroyImmediate(existing);
         }
+        private static bool MeasurePads(RectTransform parentRect, RectTransform dropdownRect, Component playButton, Component exitButton, out float topPad, out float bottomPad, out float parentHeight) {
+            topPad = 0f;
+            bottomPad = 0f;
+            parentHeight = 0f;
+            if (parentRect == null || dropdownRect == null) return false;
+            var corners = new Vector3[4];
+            dropdownRect.GetWorldCorners(corners);
+            float dropdownTop = parentRect.InverseTransformPoint(corners[1]).y;
+            float lowest = float.MaxValue;
+            foreach (Component b in new Component[] { playButton, exitButton }) {
+                if (b == null) continue;
+                var r = b.GetComponent<RectTransform>();
+                if (r == null) continue;
+                r.GetWorldCorners(corners);
+                float y = parentRect.InverseTransformPoint(corners[0]).y;
+                if (y < lowest) lowest = y;
+            }
+            if (lowest == float.MaxValue) return false;
+            Rect pr = parentRect.rect;
+            topPad = pr.yMax - dropdownTop;
+            bottomPad = lowest - pr.yMin;
+            parentHeight = pr.height;
+            MP3TogetherPlugin.Debug.UIState("MeasurePads", "parent=" + parentRect.name + " height=" + parentHeight.ToString("F1") + " topPad=" + topPad.ToString("F1") + " bottomPad=" + bottomPad.ToString("F1"));
+            return topPad >= 0f && bottomPad >= 0f;
+        }
         private static void AssembleContainerLayout(Component originalDropdown, GameObject libraryGO, Component playButton, Component exitButton, GameObject browseGO, GameObject stopGO, GameObject pauseGO, float rowHeight, Transform panel) {
             var origRect = originalDropdown.GetComponent<RectTransform>();
             if (origRect == null || playButton == null) return;
             Transform oldParent = originalDropdown.transform.parent;
             const float spacing = 4f;
+            float topPad = 0f, bottomPad = 0f, parentHeight = 0f;
+            bool measured = MP3TogetherPlugin.UIOnTop.Value && MeasurePads(oldParent as RectTransform, origRect, playButton, exitButton, out topPad, out bottomPad, out parentHeight);
+            if (!measured) { topPad = 0f; bottomPad = 0f; parentHeight = 0f; }
             GameObject root = new GameObject(LayoutRootName, typeof(RectTransform));
             root.transform.SetParent(oldParent, false);
             var rootRect = root.GetComponent<RectTransform>();
             float newRootHeight = (rowHeight * 4f) + (spacing * 3f);
 
-            if (MP3TogetherDebug.UIOnTop.Value) {
+            if (MP3TogetherPlugin.UIOnTop.Value) {
                 rootRect.anchorMin = new Vector2(0.5f, 1f);
                 rootRect.anchorMax = new Vector2(0.5f, 1f);
                 rootRect.pivot = new Vector2(0.5f, 1f);
@@ -564,7 +607,7 @@ namespace MP3Client {
                 rootRect.pivot = new Vector2(0.5f, 0.5f);
             }
 
-            rootRect.anchoredPosition = new Vector2(0f, -(rowHeight * 0.25f));
+            rootRect.anchoredPosition = new Vector2(0f, measured ? -topPad : -(rowHeight * 0.25f));
             rootRect.sizeDelta = new Vector2(origRect.rect.width, newRootHeight);
 
             root.transform.SetSiblingIndex(originalDropdown.transform.GetSiblingIndex());
@@ -572,7 +615,7 @@ namespace MP3Client {
             var hLayoutType = UITypes.HorizontalLayoutGroup;
             var layoutElementType = UITypes.LayoutElement;
             if (vLayoutType == null || hLayoutType == null) {
-                MP3TogetherDebug.Log.LogError("mp3client: VerticalLayoutGroup/HorizontalLayoutGroup not found - cannot build container layout");
+                MP3TogetherPlugin.Log.LogError("mp3together: VerticalLayoutGroup/HorizontalLayoutGroup not found - cannot build container layout");
                 UnityEngine.Object.DestroyImmediate(root);
                 return;
             }
@@ -588,11 +631,11 @@ namespace MP3Client {
             SetRowLayoutElement(originalDropdown.gameObject, layoutElementType, rowHeight);
             libraryGO.transform.SetParent(root.transform, false);
             SetRowLayoutElement(libraryGO, layoutElementType, rowHeight);
-            GameObject row1 = BuildRow(root.transform, "MP3Client_Row_BrowseStopPause", hLayoutType, layoutElementType, rowHeight);
+            GameObject row1 = BuildRow(root.transform, "MP3Together_Row_BrowseStopPause", hLayoutType, layoutElementType, rowHeight);
             browseGO.transform.SetParent(row1.transform, false);
             stopGO.transform.SetParent(row1.transform, false);
             pauseGO.transform.SetParent(row1.transform, false);
-            GameObject row2 = BuildRow(root.transform, "MP3Client_Row_PlayExit", hLayoutType, layoutElementType, rowHeight);
+            GameObject row2 = BuildRow(root.transform, "MP3Together_Row_PlayExit", hLayoutType, layoutElementType, rowHeight);
             if (exitButton != null) exitButton.transform.SetParent(row2.transform, false);
             playButton.transform.SetParent(row2.transform, false);
 
@@ -607,7 +650,7 @@ namespace MP3Client {
             NeutralizeCompetingLayout(playButton.GetComponent<RectTransform>());
             if (exitButton != null) NeutralizeCompetingLayout(exitButton.GetComponent<RectTransform>());
 
-            float addedHeight = (rowHeight * 2.5f) + (spacing * 2f);
+            float addedHeight = measured ? Mathf.Max(0f, topPad + newRootHeight + bottomPad - parentHeight) : (rowHeight * 2.5f) + (spacing * 2f);
             GrowPanel(panel, addedHeight);
 
             var rebuilderType = UITypes.LayoutRebuilder;
@@ -646,7 +689,7 @@ namespace MP3Client {
             var rt = panel as RectTransform;
             if (rt == null) return;
 
-            if (MP3TogetherDebug.UIOnTop.Value) {
+            if (MP3TogetherPlugin.UIOnTop.Value) {
                 rt.anchorMin = new Vector2(0.5f, 1f);
                 rt.anchorMax = new Vector2(0.5f, 1f);
                 rt.pivot = new Vector2(0.5f, 1f);
@@ -665,17 +708,17 @@ namespace MP3Client {
             Vector2 stepDown2 = new Vector2(0f, -(rowHeight * 1.5f + verticalOffset));
             float baseX = origRect != null ? origRect.anchoredPosition.x : 0f;
             float baseY = origRect != null ? origRect.anchoredPosition.y + stepDown2.y : 0f;
-            MakeButton(parent, BrowseButtonName, origRect, new Vector2(baseX - fourthWidth * 1.5f - 4f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(1f, 0f, 1f, 0.85f), Protocol.BROWSE_LABEL, () => Patch_InterceptBrowsePlay.BrowseAndPackage(mp3MenuInstance));
-            MakeButton(parent, "MP3Client_SendButton", origRect, new Vector2(baseX - fourthWidth * 0.5f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(0f, 1f, 1f, 0.85f), "Send", () => {
+            MakeButton(parent, BrowseButtonName, origRect, new Vector2(baseX - fourthWidth * 1.5f - 4f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(1f, 0f, 1f, 0.85f), Protocol.BROWSE_LABEL, () => Patch_InterceptBrowsePlay.Browse(mp3MenuInstance));
+            MakeButton(parent, "MP3Together_SendButton", origRect, new Vector2(baseX - fourthWidth * 0.5f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(0f, 1f, 1f, 0.85f), "Send", () => {
                 string path;
                 if (!selectedSongFor.TryGetValue(mp3MenuInstance, out path) || string.IsNullOrEmpty(path)) {
-                    Multiplayer.DoMultiplayerStatusMessageError("mp3client: pick a song first.");
+                    Msg.Error("mp3together: pick a song first.");
                     return;
                 }
                 Patch_InterceptBrowsePlay.SendStagedSong(mp3MenuInstance, path);
             });
-            MakeButton(parent, "MP3Client_PauseButton", origRect, new Vector2(baseX + fourthWidth * 0.5f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(1f, 0.75f, 0.1f, 0.85f), "Pause", OnPauseButtonClicked);
-            MakeButton(parent, "MP3Client_StopButton", origRect, new Vector2(baseX + fourthWidth * 1.5f + 4f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(1f, 0.25f, 0.25f, 0.85f), "Stop", OnStopButtonClicked);
+            MakeButton(parent, "MP3Together_PauseButton", origRect, new Vector2(baseX + fourthWidth * 0.5f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(1f, 0.75f, 0.1f, 0.85f), "Pause", OnPauseButtonClicked);
+            MakeButton(parent, "MP3Together_StopButton", origRect, new Vector2(baseX + fourthWidth * 1.5f + 4f, baseY), new Vector2(fourthWidth, rowHeight - 4f), new Color(1f, 0.25f, 0.25f, 0.85f), "Stop", OnStopButtonClicked);
         }
         private static RectTransform MakeButton(Transform parent, string name, RectTransform origRect, Vector2 anchoredPosition, Vector2 size, Color color, string label, Action onClick) {
             GameObject buttonGO = new GameObject(name, typeof(RectTransform));
@@ -727,6 +770,11 @@ namespace MP3Client {
         }
         public static int RefreshLibraryOptions(object libDropdown, string selectPath) {
             cachedSongs = CustomMusicFolder.Scan();
+            browsedSongs.RemoveAll(song => !File.Exists(song));
+            foreach (string browsed in browsedSongs) {
+                string full = Path.GetFullPath(browsed);
+                if (!cachedSongs.Exists(song => string.Equals(Path.GetFullPath(song), full, StringComparison.OrdinalIgnoreCase))) cachedSongs.Add(browsed);
+            }
             var labels = new List<string> { "Select a song..." };
             labels.AddRange(cachedSongs.Select(Path.GetFileNameWithoutExtension));
             ReflectionHelpers.CallMethod(libDropdown, "ClearOptions", Type.EmptyTypes, null);
@@ -745,19 +793,22 @@ namespace MP3Client {
         }
         public static void TryRefresh(object mp3MenuInstance, string selectPath) {
             object libDropdown;
-            if (libraryDropdownFor.TryGetValue(mp3MenuInstance, out libDropdown)) RefreshLibraryOptions(libDropdown, selectPath);
+            if (!libraryDropdownFor.TryGetValue(mp3MenuInstance, out libDropdown)) return;
+            RefreshLibraryOptions(libDropdown, selectPath);
         }
         internal static void SelectLocal(object mp3MenuInstance, string path) {
+            string fullPath = Path.GetFullPath(path);
+            if (!browsedSongs.Exists(song => string.Equals(Path.GetFullPath(song), fullPath, StringComparison.OrdinalIgnoreCase))) browsedSongs.Add(path);
             try {
                 TryRefresh(mp3MenuInstance, path);
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogWarning("mp3client: couldn't show " + Path.GetFileName(path) + " in the library dropdown: " + e.Message);
+                MP3TogetherPlugin.Log.LogWarning("mp3together: couldn't show " + Path.GetFileName(path) + " in the library dropdown: " + e.Message);
             }
             Stage(mp3MenuInstance, path);
             lastSourceFor.Remove(mp3MenuInstance);
             lastSourceFor.Add(mp3MenuInstance, "local");
             LocalIsSelected = true;
-            Multiplayer.DoMultiplayerStatusMessageLog("mp3client: selected " + Path.GetFileName(path) + ", press Play.");
+            Msg.Log("mp3together: selected " + Path.GetFileName(path) + ", press Play.");
         }
         public static void Stage(object mp3MenuInstance, string path) {
             selectedSongFor.Remove(mp3MenuInstance);
@@ -785,7 +836,7 @@ namespace MP3Client {
                 lastSourceFor.Remove(mp3MenuInstance);
                 lastSourceFor.Add(mp3MenuInstance, "local");
                 LocalIsSelected = true;
-                Multiplayer.DoMultiplayerStatusMessageLog("mp3client: staged " + Path.GetFileName(songs[songIndex]) + ", press Play.");
+                Msg.Log("mp3together: staged " + Path.GetFileName(songs[songIndex]) + ", press Play.");
             };
             addListener.Invoke(evt, new object[] { handler });
         }
@@ -798,12 +849,12 @@ namespace MP3Client {
         }
         internal static Set CreateAll(Component anchorButton, object mp3MenuInstance) {
             var set = new Set();
-            set.Browse = Clone(anchorButton.gameObject, "MP3Client_BrowseButton", () => Patch_InterceptBrowsePlay.BrowseAndPackage(mp3MenuInstance));
+            set.Browse = Clone(anchorButton.gameObject, "MP3Together_BrowseButton", () => Patch_InterceptBrowsePlay.Browse(mp3MenuInstance));
             ApplyIconOnly(set.Browse, "BrowseIcon.png", "FILE");
-            set.Stop = Clone(set.Browse, "MP3Client_StopButton", LocalLibraryUI.StopOrCancel);
-            ApplyLabeled(set.Stop, "Stop", MP3TogetherDebug.ColoredButtons.Value ? new Color(1f, 0.25f, 0.25f, 0.85f) : Color.white, "StopIcon.png");
-            set.Pause = Clone(set.Browse, "MP3Client_PauseButton", LocalLibraryUI.OnPauseButtonClicked);
-            ApplyLabeled(set.Pause, "Pause", MP3TogetherDebug.ColoredButtons.Value ? new Color(1f, 0.75f, 0.1f, 0.85f) : Color.white, "PauseIcon.png");
+            set.Stop = Clone(set.Browse, "MP3Together_StopButton", LocalLibraryUI.StopOrCancel);
+            ApplyLabeled(set.Stop, "Stop", MP3TogetherPlugin.ColoredButtons.Value ? new Color(1f, 0.25f, 0.25f, 0.85f) : Color.white, "StopIcon.png");
+            set.Pause = Clone(set.Browse, "MP3Together_PauseButton", LocalLibraryUI.OnPauseButtonClicked);
+            ApplyLabeled(set.Pause, "Pause", MP3TogetherPlugin.ColoredButtons.Value ? new Color(1f, 0.75f, 0.1f, 0.85f) : Color.white, "PauseIcon.png");
             return set;
         }
         internal static GameObject Clone(GameObject template, string name, Action onClick) {
@@ -916,7 +967,7 @@ namespace MP3Client {
                     return Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f));
                 }
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogError("mp3client: Icon load exception: " + e);
+                MP3TogetherPlugin.Log.LogError("mp3together: Icon load exception: " + e);
                 return null;
             }
         }
@@ -933,64 +984,70 @@ namespace MP3Client {
         }
     }
     internal static class PendingPromptUI {
-        internal static void Show(Action onAccept, Action onReject) {
+        private static UIChoicePrompt.Prompt current;
+        private static UIChoicePrompt.Prompt Build(string text, Action onAccept, Action onReject) {
+            var prompt = new UIChoicePrompt.Prompt();
+            prompt.name = "MP3Together";
+            prompt.text = text;
+            prompt.timeout = 30f;
+            prompt.defaultcanignore = true;
+            var accept = new UIChoicePrompt.Prompt.PromptChoice();
+            accept.text = "Accept";
+            accept.action = delegate () {
+                MP3TogetherPlugin.Debug.Trace("ShowPendingPrompt", "Accept clicked");
+                onAccept();
+            };
+            var reject = new UIChoicePrompt.Prompt.PromptChoice();
+            reject.text = "Reject";
+            reject.action = delegate () {
+                MP3TogetherPlugin.Debug.Trace("ShowPendingPrompt", "Reject clicked");
+                onReject();
+            };
+            prompt.choices = new UIChoicePrompt.Prompt.PromptChoice[] { accept, reject };
+            return prompt;
+        }
+        internal static void Show(string text, Action onAccept, Action onReject) {
+            Hide();
             try {
-                var prompt = new UIChoicePrompt.Prompt();
-                prompt.name = "MP3Client";
-                prompt.text = "A player wants to load custom music. Load it now?";
-                prompt.timeout = 30f;
-                prompt.defaultcanignore = true;
-                var accept = new UIChoicePrompt.Prompt.PromptChoice();
-                accept.text = "Accept";
-                accept.action = delegate () {
-                    MP3TogetherDebug.Debug.Trace("ShowPendingPrompt", "Accept clicked");
-                    onAccept();
-                };
-                var reject = new UIChoicePrompt.Prompt.PromptChoice();
-                reject.text = "Reject";
-                reject.action = delegate () {
-                    MP3TogetherDebug.Debug.Trace("ShowPendingPrompt", "Reject clicked");
-                    onReject();
-                };
-                prompt.choices = new UIChoicePrompt.Prompt.PromptChoice[] { accept, reject };
+                var prompt = Build(text, onAccept, onReject);
                 UIChoicePrompt.ShowPrompt(prompt);
+                current = prompt;
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogWarning("mp3client: ShowPendingPrompt failed, falling back to MP3accept/MP3reject console commands: " + e.Message);
+                MP3TogetherPlugin.Log.LogWarning("mp3together: the accept/reject prompt couldn't be shown, the request is treated as rejected: " + e.Message);
+                onReject();
             }
         }
-        internal static void Hide() {
+        internal static UIChoicePrompt.Prompt ShowChoice(string text, Action onAccept, Action onReject) {
             try {
-                var promptType = AccessTools.TypeByName("UIChoicePrompt");
-                if (promptType == null) return;
-                foreach (string name in new[] { "HidePrompt", "ClosePrompt", "Hide", "Close", "Dismiss", "CancelPrompt" }) {
-                    var m = AccessTools.Method(promptType, name);
-                    if (m != null && m.GetParameters().Length == 0) { m.Invoke(null, null); return; }
-                }
-                MP3TogetherDebug.Debug.Trace("TryHideNativePrompt", "no known hide method found on UIChoicePrompt - prompt state is cleared, but the visual will linger until timeout or manually clicked");
+                var prompt = Build(text, onAccept, onReject);
+                UIChoicePrompt.ShowPrompt(prompt);
+                return prompt;
             } catch (Exception e) {
-                MP3TogetherDebug.Debug.Trace("TryHideNativePrompt", "couldn't hide the native prompt automatically: " + e.Message);
+                MP3TogetherPlugin.Log.LogWarning("mp3together: the accept/reject prompt couldn't be shown, the request is treated as rejected: " + e.Message);
+                onReject();
+                return null;
             }
+        }
+        internal static void Close(UIChoicePrompt.Prompt prompt) {
+            if (prompt != null) prompt.timeout = 0f;
+        }
+        internal static void Hide() {
+            if (current == null) return;
+            current.timeout = 0f;
+            current = null;
+            MP3TogetherPlugin.Debug.Trace("PendingPromptUI.Hide", "prompt closed by setting its timeout to 0");
         }
     }
     internal static class Patch_InterceptBrowsePlay {
         private const string FileFilter = "Audio files (*.mp3;*.wav;*.ogg)\0*.mp3;*.wav;*.ogg\0All files\0*.*\0\0";
         private static bool browseOpen;
-        public static void BrowseAndPackage(object mp3MenuInstance) {
+        public static void Browse(object mp3MenuInstance) {
             if (browseOpen) return;
             browseOpen = true;
             NativeFileDialog.ShowAsync(FileFilter, path => {
                 browseOpen = false;
-                if (string.IsNullOrEmpty(path)) {
-                    return;
-                }
-                string packaged;
-                try {
-                    packaged = CustomMusicFolder.CopyIn(path);
-                } catch (Exception e) {
-                    Multiplayer.DoMultiplayerStatusMessageError("mp3client: couldn't copy into custommusic: " + e.Message);
-                    return;
-                }
-                LocalLibraryUI.SelectLocal(mp3MenuInstance, packaged);
+                if (string.IsNullOrEmpty(path)) return;
+                LocalLibraryUI.SelectLocal(mp3MenuInstance, path);
             });
         }
         public static void SendStagedSong(object mp3MenuInstance, string path) {
@@ -1000,12 +1057,12 @@ namespace MP3Client {
         internal static void StopResend(ushort syncId) {
             Coroutine co;
             if (!resendRoutines.TryGetValue(syncId, out co)) return;
-            if (co != null) MP3TogetherDebug.Instance.StopCoroutine(co);
+            if (co != null) MP3TogetherPlugin.Instance.StopCoroutine(co);
             resendRoutines.Remove(syncId);
         }
         internal static void StartResend(ushort syncId, string ext, byte[] bytes, int fromOffset) {
             StopResend(syncId);
-            resendRoutines[syncId] = MP3TogetherDebug.Instance.StartCoroutine(SendFileCoroutine(syncId, ext, bytes, fromOffset, false));
+            resendRoutines[syncId] = MP3TogetherPlugin.Instance.StartCoroutine(SendFileCoroutine(syncId, ext, bytes, fromOffset, false));
         }
         public static void SendCancel(ushort syncId) {
             var writer = Protocol.Writer(Protocol.MSG_CANCEL);
@@ -1033,61 +1090,76 @@ namespace MP3Client {
             var itemField = AccessTools.Field(typeof(MP3Menu_UpdateList_MultiplayerPatch), "last_locally_used_mp3_player");
             var itemObj = itemField.GetValue(null);
             if (itemObj == null) {
-                Multiplayer.DoMultiplayerStatusMessageError("mp3client: no mp3 player selected.");
+                Msg.Error("mp3together: no mp3 player selected.");
                 return;
             }
             var component = (Component)itemObj;
             SyncInfo si;
             if (!NetObjectRegistry.TryGetSyncInfoOrRegister(component, out si)) {
-                Multiplayer.DoMultiplayerStatusMessageError("mp3client: mp3 player not registered on network yet, try again.");
+                Msg.Error("mp3together: mp3 player not registered on network yet, try again.");
                 return;
             }
             ushort syncId = si.syncId;
+            if (HostPluginCheck.CurrentStatus == HostPluginCheck.Status.Missing) {
+                Msg.Error("mp3together: the host doesn't have MP3Together, custom songs can't be sent.");
+                return;
+            }
             long length;
             try {
                 length = new FileInfo(path).Length;
             } catch (Exception e) {
-                Multiplayer.DoMultiplayerStatusMessageError("mp3client: couldn't read " + path + ": " + e.Message);
+                Msg.Error("mp3together: couldn't read " + path + ": " + e.Message);
                 return;
             }
-            long limit = HostPluginCheck.HostMaxFileBytes > 0 ? HostPluginCheck.HostMaxFileBytes : Protocol.CLIENT_ABSOLUTE_MAX_BYTES;
+            long limit = HostPluginCheck.HostMaxFileBytes > 0 ? HostPluginCheck.HostMaxFileBytes : int.MaxValue;
             if (length <= 0 || length > limit) {
-                Multiplayer.DoMultiplayerStatusMessageError(length <= 0 ? "mp3client: " + Path.GetFileName(path) + " is empty." : "mp3client: " + Path.GetFileName(path) + " is " + (length / 1048576f).ToString("F1") + " MB, the host allows " + (limit / 1048576f).ToString("F1") + " MB.");
-                MP3TogetherDebug.Debug.SendBlockedBySize(syncId, length, limit);
+                Msg.Error(length <= 0 ? "mp3together: " + Path.GetFileName(path) + " is empty." : "mp3together: " + Path.GetFileName(path) + " is " + (length / 1048576f).ToString("F1") + (HostPluginCheck.HostMaxFileBytes > 0 ? " MB, the host allows " + (limit / 1048576f).ToString("F1") + " MB." : " MB, more than one file can hold in memory (2 GB)."));
+                MP3TogetherPlugin.Debug.SendBlockedBySize(syncId, length, limit);
                 return;
             }
             byte[] bytes;
             try {
                 bytes = File.ReadAllBytes(path);
             } catch (Exception e) {
-                Multiplayer.DoMultiplayerStatusMessageError("mp3client: couldn't read " + path + ": " + e.Message);
+                Msg.Error("mp3together: couldn't read " + path + ": " + e.Message);
                 return;
             }
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext != ".mp3" && ext != ".wav" && ext != ".ogg") {
-                Multiplayer.DoMultiplayerStatusMessageError("mp3client: unsupported file type " + ext);
+                Msg.Error("mp3together: unsupported file type " + ext);
                 return;
             }
             LocalLibraryUI.SetSongActive(true);
             LocalLibraryUI.BeginSend(mp3MenuInstance);
-            SendFile(mp3MenuInstance, syncId, ext, bytes);
+            SendFile(mp3MenuInstance, syncId, ext, bytes, Path.GetFileName(path));
         }
         internal static readonly Dictionary<ushort, (string Ext, byte[] Bytes)> pendingFiles = new Dictionary<ushort, (string, byte[])>();
         internal static void ForgetPending(ushort syncId) {
             pendingFiles.Remove(syncId);
+        }
+        internal static int ReleasePendingExcept(bool hasKeep, ushort keep, out long bytes) {
+            bytes = 0;
+            int count = 0;
+            foreach (ushort id in new List<ushort>(pendingFiles.Keys)) {
+                if (hasKeep && id == keep) continue;
+                bytes += pendingFiles[id].Bytes.Length;
+                pendingFiles.Remove(id);
+                count++;
+            }
+            return count;
         }
         private static IEnumerator ReleasePendingLater(ushort syncId, byte[] bytes) {
             yield return new WaitForSecondsRealtime(Protocol.OVERALL_DEADLINE_SECONDS);
             (string Ext, byte[] Bytes) cached;
             if (pendingFiles.TryGetValue(syncId, out cached) && ReferenceEquals(cached.Bytes, bytes)) pendingFiles.Remove(syncId);
         }
-        static void SendFile(object mp3MenuInstance, ushort syncId, string ext, byte[] bytes) {
+        static void SendFile(object mp3MenuInstance, ushort syncId, string ext, byte[] bytes, string name) {
             StopResend(syncId);
             pendingFiles[syncId] = (ext, bytes);
-            var co = MP3TogetherDebug.Instance.StartCoroutine(SendFileCoroutine(syncId, ext, bytes, 0, true, mp3MenuInstance));
+            var co = MP3TogetherPlugin.Instance.StartCoroutine(SendFileCoroutine(syncId, ext, bytes, 0, true, mp3MenuInstance, name));
             LocalLibraryUI.RegisterTransfer(mp3MenuInstance, syncId, co);
         }
-        internal static IEnumerator SendFileCoroutine(ushort syncId, string ext, byte[] bytes, int startOffset, bool sendBegin, object mp3MenuInstance = null) {
+        internal static IEnumerator SendFileCoroutine(ushort syncId, string ext, byte[] bytes, int startOffset, bool sendBegin, object mp3MenuInstance = null, string name = null) {
             float startTime = Time.unscaledTime;
             string exitReason = "interrupted/unknown (finally reached without normal completion)";
             try {
@@ -1098,9 +1170,10 @@ namespace MP3Client {
                     beginWriter.Put(bytes.Length);
                     beginWriter.Put(ext);
                     beginWriter.Put(transferId);
+                    beginWriter.Put(name ?? "");
                     var dmBegin = DeliveryMethod.ReliableOrdered;
                     Net.Client_Send(in dmBegin, in beginWriter);
-                    MP3TogetherDebug.Debug.SendStart(syncId, ext, bytes.Length);
+                    MP3TogetherPlugin.Debug.SendStart(syncId, ext, bytes.Length);
                     yield return null;
                 }
                 int offset = startOffset;
@@ -1114,7 +1187,7 @@ namespace MP3Client {
                 int nextThresholdIndex = 0;
                 int startPercent = bytes.Length > 0 ? (int)((offset / (float)bytes.Length) * 100f) : 0;
                 while (nextThresholdIndex < percentThresholds.Length && percentThresholds[nextThresholdIndex] <= startPercent) nextThresholdIndex++;
-                if (sendBegin) Multiplayer.DoMultiplayerStatusMessageLog("mp3client: staged with 0% package");
+                if (sendBegin) Msg.Log("mp3together: staged with 0% package");
                 while (offset < bytes.Length) {
                     int len = Math.Min(Protocol.CHUNK_SIZE, bytes.Length - offset);
                     bool throttled = false;
@@ -1127,7 +1200,7 @@ namespace MP3Client {
                             if (SendLimiter.TryTake(len)) break;
                             if (!throttled) {
                                 throttled = true;
-                                MP3TogetherDebug.Debug.SendThrottled(syncId, "rate");
+                                MP3TogetherPlugin.Debug.SendThrottled(syncId, "rate");
                             }
                             lastProgress = Time.unscaledTime;
                             yield return null;
@@ -1135,7 +1208,7 @@ namespace MP3Client {
                         }
                         if (!throttled) {
                             throttled = true;
-                            MP3TogetherDebug.Debug.SendThrottled(syncId, windowFull ? "window" : "steam");
+                            MP3TogetherPlugin.Debug.SendThrottled(syncId, windowFull ? "window" : "steam");
                         }
                         if (nowAck != seenAck) {
                             seenAck = nowAck;
@@ -1145,13 +1218,13 @@ namespace MP3Client {
                         float idle = Time.unscaledTime - lastProgress;
                         if (idle > Protocol.ACK_STALL_SECONDS && !stallLogged) {
                             stallLogged = true;
-                            MP3TogetherDebug.Debug.SendAckStalled(syncId);
+                            MP3TogetherPlugin.Debug.SendAckStalled(syncId);
                         }
                         if (idle > Protocol.SEND_ABORT_SECONDS) {
-                            Multiplayer.DoMultiplayerStatusMessageError("mp3client: send aborted - no progress for " + Protocol.SEND_ABORT_SECONDS.ToString("F0") + "s (host not acknowledging or the connection is saturated).");
+                            Msg.Error("mp3together: send aborted - no progress for " + Protocol.SEND_ABORT_SECONDS.ToString("F0") + "s (host not acknowledging or the connection is saturated).");
                             Patch_InterceptBrowsePlay.SendCancel(syncId);
                             ForgetPending(syncId);
-                            MP3TogetherDebug.Debug.SendAborted(syncId, "no progress for " + Protocol.SEND_ABORT_SECONDS.ToString("F0") + "s");
+                            MP3TogetherPlugin.Debug.SendAborted(syncId, "no progress for " + Protocol.SEND_ABORT_SECONDS.ToString("F0") + "s");
                             if (mp3MenuInstance != null) LocalLibraryUI.ClearIfCurrent(mp3MenuInstance, syncId);
                             exitReason = "aborted: no progress for " + Protocol.SEND_ABORT_SECONDS.ToString("F0") + "s";
                             yield break;
@@ -1170,14 +1243,14 @@ namespace MP3Client {
                         Net.Client_Send(in dmChunk, in chunkWriter);
                     } catch (Exception e) {
                         chunkSent = false;
-                        MP3TogetherDebug.Debug.SendChunkFailed(syncId, chunkIndex, offset, e);
+                        MP3TogetherPlugin.Debug.SendChunkFailed(syncId, chunkIndex, offset, e);
                         CrashLog.Capture("send chunk", e);
                     }
                     if (!chunkSent) {
-                        Multiplayer.DoMultiplayerStatusMessageError("mp3client: send failed - the connection rejected a chunk, transfer stopped.");
+                        Msg.Error("mp3together: send failed - the connection rejected a chunk, transfer stopped.");
                         try { Patch_InterceptBrowsePlay.SendCancel(syncId); } catch (Exception) { }
                         ForgetPending(syncId);
-                        MP3TogetherDebug.Debug.SendAborted(syncId, "chunk send failed");
+                        MP3TogetherPlugin.Debug.SendAborted(syncId, "chunk send failed");
                         if (mp3MenuInstance != null) LocalLibraryUI.ClearIfCurrent(mp3MenuInstance, syncId);
                         exitReason = "aborted: chunk send failed";
                         yield break;
@@ -1188,8 +1261,8 @@ namespace MP3Client {
                     lastProgress = Time.unscaledTime;
                     int percent = bytes.Length > 0 ? (int)((offset / (float)bytes.Length) * 100f) : 100;
                     while (nextThresholdIndex < percentThresholds.Length && percent >= percentThresholds[nextThresholdIndex]) {
-                        Multiplayer.DoMultiplayerStatusMessageLog("mp3client: staged with " + percentThresholds[nextThresholdIndex] + "% package");
-                        MP3TogetherDebug.Debug.SendProgress(syncId, offset, bytes.Length, Time.unscaledTime - startTime);
+                        Msg.Log("mp3together: staged with " + percentThresholds[nextThresholdIndex] + "% package");
+                        MP3TogetherPlugin.Debug.SendProgress(syncId, offset, bytes.Length, Time.unscaledTime - startTime);
                         nextThresholdIndex++;
                     }
                     if (HostPluginCheck.HostProtocol < 2) yield return new WaitForSeconds(Protocol.LEGACY_CHUNK_INTERVAL_SECONDS);
@@ -1200,12 +1273,12 @@ namespace MP3Client {
                 endWriter.Put(syncId);
                 var dmEnd = DeliveryMethod.ReliableOrdered;
                 Net.Client_Send(in dmEnd, in endWriter);
-                MP3TogetherDebug.Debug.SendDone(syncId, bytes.Length, Time.unscaledTime - startTime);
-                if (sendBegin) MP3TogetherDebug.Instance.StartCoroutine(ReleasePendingLater(syncId, bytes));
+                MP3TogetherPlugin.Debug.SendDone(syncId, bytes.Length, Time.unscaledTime - startTime);
+                if (sendBegin) MP3TogetherPlugin.Instance.StartCoroutine(ReleasePendingLater(syncId, bytes));
                 if (mp3MenuInstance != null) LocalLibraryUI.ClearIfCurrent(mp3MenuInstance, syncId);
                 exitReason = "completed normally";
             } finally {
-                MP3TogetherDebug.Debug.SendCoroutineExit(syncId, exitReason);
+                MP3TogetherPlugin.Debug.SendCoroutineExit(syncId, exitReason);
             }
         }
     }
@@ -1246,9 +1319,9 @@ namespace MP3Client {
                 try {
                     result = ShowBlocking(filter);
                 } catch (Exception e) {
-                    MP3TogetherDebug.Log.LogError("mp3client: file dialog failed: " + e);
+                    MP3TogetherPlugin.Log.LogError("mp3together: file dialog failed: " + e);
                 }
-                MP3TogetherDebug.RunOnMainThread(() => onResult(result));
+                MP3TogetherPlugin.RunOnMainThread(() => onResult(result));
             });
             thread.SetApartmentState(ApartmentState.STA);
             thread.IsBackground = true;

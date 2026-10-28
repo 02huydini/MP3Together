@@ -7,7 +7,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 #endif
 
-namespace MP3Client {
+namespace MP3Together {
     internal static class PreviewData {
         public static byte[] Prepare(string ext, byte[] prefix) {
             if (ext == ".ogg") return TrimToOggPage(prefix);
@@ -86,6 +86,7 @@ namespace MP3Client {
         private static readonly Dictionary<ushort, Coroutine> decoding = new Dictionary<ushort, Coroutine>();
         private static readonly Dictionary<ushort, string> decodePaths = new Dictionary<ushort, string>();
         private static readonly Dictionary<ushort, int> latestSeq = new Dictionary<ushort, int>();
+        private static readonly HashSet<ushort> keptFiles = new HashSet<ushort>();
         private static int tempSeq;
         private static int seqCounter;
         internal static void ResetForNewSession() {
@@ -104,32 +105,115 @@ namespace MP3Client {
             bool had = false;
             Coroutine co;
             if (decoding.TryGetValue(syncId, out co)) {
-                if (co != null) MP3TogetherDebug.Instance.StopCoroutine(co);
+                if (co != null) MP3TogetherPlugin.Instance.StopCoroutine(co);
                 decoding.Remove(syncId);
                 had = true;
             }
             string oldPath;
             if (decodePaths.TryGetValue(syncId, out oldPath)) {
                 decodePaths.Remove(syncId);
-                try { File.Delete(oldPath); } catch { }
+                if (!keptFiles.Remove(syncId)) {
+                    try { File.Delete(oldPath); } catch { }
+                }
                 had = true;
             }
             return had;
         }
         internal static void Start(ushort syncId, int seq, string ext, byte[] bytes, bool isPreview, Func<ushort, int, bool> isLive) {
             Cancel(syncId);
-            string tempPath = Path.Combine(Path.GetTempPath(), "mp3client_" + syncId + "_" + (++tempSeq) + ext);
+            string tempPath = Path.Combine(Path.GetTempPath(), "mp3together_" + syncId + "_" + (++tempSeq) + ext);
             File.WriteAllBytes(tempPath, bytes);
             decodePaths[syncId] = tempPath;
-            var co = MP3TogetherDebug.Instance.StartCoroutine(DecodeAndPlay(tempPath, ext, syncId, seq, isPreview, bytes.Length, isLive));
+            var co = MP3TogetherPlugin.Instance.StartCoroutine(DecodeAndPlay(tempPath, ext, syncId, seq, isPreview, bytes.Length, isLive, true));
             decoding[syncId] = co;
+        }
+        internal static void StartFromFile(ushort syncId, int seq, string ext, string path) {
+            Cancel(syncId);
+            long length = 0;
+            try { length = new FileInfo(path).Length; } catch { }
+            decodePaths[syncId] = path;
+            keptFiles.Add(syncId);
+            var co = MP3TogetherPlugin.Instance.StartCoroutine(DecodeAndPlay(path, ext, syncId, seq, false, (int)length, null, false));
+            decoding[syncId] = co;
+        }
+        internal static string CopyFolder {
+            get { return Path.Combine(Path.Combine(BepInEx.Paths.PluginPath, UpdaterConfig.FOLDER_NAME), Protocol.COPY_FOLDER_NAME); }
+        }
+        internal static string SafeName(string raw, string ext) {
+            if (string.IsNullOrEmpty(raw)) return null;
+            string name = raw.Trim();
+            if (name.Length == 0 || name.Length > 150 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;
+            if (Path.GetFileNameWithoutExtension(name).Length == 0) return null;
+            if (!string.Equals(Path.GetExtension(name), ext, StringComparison.OrdinalIgnoreCase)) return null;
+            return name;
+        }
+        internal static string FindCopy(string name, long size) {
+            try {
+                string path = Path.Combine(CopyFolder, name);
+                if (!File.Exists(path)) return null;
+                return new FileInfo(path).Length == size ? path : null;
+            } catch (Exception) {
+                return null;
+            }
+        }
+        internal static string CopyLocal(string name, byte[] data) {
+            string temp = null;
+            try {
+                string folder = CopyFolder;
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, name);
+                temp = path + ".part";
+                File.WriteAllBytes(temp, data);
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(temp, path);
+                MP3TogetherPlugin.Debug.CopySaved(name, data.Length);
+                return path;
+            } catch (Exception e) {
+                MP3TogetherPlugin.Log.LogWarning("mp3together: couldn't keep a copy of " + name + ": " + e.Message);
+                MP3TogetherPlugin.Debug.CopyFailed(name, e.Message);
+                if (temp != null) {
+                    try { File.Delete(temp); } catch { }
+                }
+                return null;
+            }
+        }
+        internal static IEnumerator LoadClip(string path, string ext, Action<AudioClip> done, Action<string> failed) {
+            AudioType type = AudioType.MPEG;
+            if (ext == ".wav") type = AudioType.WAV;
+            else if (ext == ".ogg") type = AudioType.OGGVORBIS;
+            string url;
+            try {
+                url = new Uri(path).AbsoluteUri;
+            } catch (Exception e) {
+                failed(e.Message);
+                yield break;
+            }
+            using (UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip(url, type)) {
+                yield return www.SendWebRequest();
+                if (!string.IsNullOrEmpty(www.error)) {
+                    failed(www.error);
+                    yield break;
+                }
+                AudioClip clip = null;
+                string error = null;
+                try {
+                    clip = DownloadHandlerAudioClip.GetContent(www);
+                } catch (Exception e) {
+                    error = e.Message;
+                }
+                if (clip == null) {
+                    failed(error ?? "no audio data");
+                    yield break;
+                }
+                done(clip);
+            }
         }
         internal static int SweepTempFiles(bool startup) {
             int removed = 0;
             long bytes = 0;
             try {
                 var keep = new HashSet<string>(decodePaths.Values);
-                foreach (string file in Directory.GetFiles(Path.GetTempPath(), "mp3client_*")) {
+                foreach (string file in Directory.GetFiles(Path.GetTempPath(), "mp3together_*")) {
                     if (keep.Contains(file)) continue;
                     try {
                         if (!startup && (DateTime.UtcNow - File.GetLastWriteTimeUtc(file)).TotalSeconds < Protocol.TEMP_FILE_MAX_AGE_SECONDS) continue;
@@ -140,37 +224,60 @@ namespace MP3Client {
                     } catch (Exception) { }
                 }
             } catch (Exception e) {
-                MP3TogetherDebug.Log.LogWarning("mp3client: temp file sweep failed: " + e.Message);
+                MP3TogetherPlugin.Log.LogWarning("mp3together: temp file sweep failed: " + e.Message);
             }
-            if (removed > 0) MP3TogetherDebug.Debug.TempSwept(removed, bytes);
+            if (startup) {
+                try {
+                    string folder = CopyFolder;
+                    if (Directory.Exists(folder)) {
+                        foreach (string part in Directory.GetFiles(folder, "*.part")) {
+                            try { File.Delete(part); } catch { }
+                        }
+                    }
+                } catch (Exception) { }
+            }
+            if (removed > 0) MP3TogetherPlugin.Debug.TempSwept(removed, bytes);
             return removed;
         }
-        private static IEnumerator DecodeAndPlay(string path, string ext, ushort syncId, int seq, bool isPreview, int sourceBytes, Func<ushort, int, bool> isLive) {
+        private static IEnumerator DecodeAndPlay(string path, string ext, ushort syncId, int seq, bool isPreview, int sourceBytes, Func<ushort, int, bool> isLive, bool deleteAfter) {
             float startTime = Time.unscaledTime;
             try {
                 AudioType type = AudioType.MPEG;
                 if (ext == ".wav") type = AudioType.WAV;
                 else if (ext == ".ogg") type = AudioType.OGGVORBIS;
-                string url = "file:///" + path.Replace("\\", "/");
+                string url;
+                try {
+                    url = new Uri(path).AbsoluteUri;
+                } catch (Exception e) {
+                    MP3TogetherPlugin.Log.LogError("mp3together: decode failed, bad path: " + e.Message);
+                    MP3TogetherPlugin.Debug.FullDecodeFailed(syncId, e.Message);
+                    if (deleteAfter) {
+                        try { File.Delete(path); } catch { }
+                    }
+                    yield break;
+                }
                 using (UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip(url, type)) {
                     yield return www.SendWebRequest();
                     if (!string.IsNullOrEmpty(www.error)) {
                         if (isPreview) {
-                            MP3TogetherDebug.Log.LogWarning("mp3client: preview decode failed, waiting for the full file: " + www.error);
-                            MP3TogetherDebug.Debug.PreviewFailed(syncId, www.error);
+                            MP3TogetherPlugin.Log.LogWarning("mp3together: preview decode failed, waiting for the full file: " + www.error);
+                            MP3TogetherPlugin.Debug.PreviewFailed(syncId, www.error);
                         } else {
-                            MP3TogetherDebug.Log.LogError("mp3client: decode failed: " + www.error);
-                            MP3TogetherDebug.Debug.FullDecodeFailed(syncId, www.error);
-                            CrashLog.WriteLocalErrorLog("decode", "syncId=" + syncId + " " + ext + ": " + www.error);
+                            MP3TogetherPlugin.Log.LogError("mp3together: decode failed: " + www.error);
+                            MP3TogetherPlugin.Debug.FullDecodeFailed(syncId, www.error);
                         }
-                        try { File.Delete(path); } catch { }
+                        if (deleteAfter) {
+                            try { File.Delete(path); } catch { }
+                        }
                         yield break;
                     }
                     AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
-                    try { File.Delete(path); } catch { }
+                    if (deleteAfter) {
+                        try { File.Delete(path); } catch { }
+                    }
                     int currentSeq;
                     if (latestSeq.TryGetValue(syncId, out currentSeq) && currentSeq != seq) {
-                        MP3TogetherDebug.Debug.DecodeDropped(syncId);
+                        MP3TogetherPlugin.Debug.DecodeDropped(syncId);
                         UnityEngine.Object.Destroy(clip);
                         yield break;
                     }
@@ -182,35 +289,36 @@ namespace MP3Client {
                 if (decodePaths.TryGetValue(syncId, out current) && current == path) {
                     decodePaths.Remove(syncId);
                     decoding.Remove(syncId);
+                    keptFiles.Remove(syncId);
                 }
             }
         }
         private static void PlayPreviewClip(ushort syncId, int seq, AudioClip clip, float startTime, Func<ushort, int, bool> isLive) {
             if (!isLive(syncId, seq)) {
-                MP3TogetherDebug.Debug.PreviewDropped(syncId, "full file already arrived or transfer is gone");
+                MP3TogetherPlugin.Debug.PreviewDropped(syncId, "full file already arrived or transfer is gone");
                 UnityEngine.Object.Destroy(clip);
                 return;
             }
             if (HostPlayback.PlayPreview(syncId, seq, clip)) {
-                MP3TogetherDebug.Debug.PreviewPlaying(syncId, clip.length, Time.unscaledTime - startTime);
+                MP3TogetherPlugin.Debug.PreviewPlaying(syncId, clip.length, Time.unscaledTime - startTime);
             } else {
-                MP3TogetherDebug.Log.LogWarning("mp3client: preview decoded syncId=" + syncId + " but its mp3 player is no longer registered - preview dropped.");
+                MP3TogetherPlugin.Log.LogWarning("mp3together: preview decoded syncId=" + syncId + " but its mp3 player is no longer registered - preview dropped.");
                 UnityEngine.Object.Destroy(clip);
             }
         }
         private static void PlayFullClip(ushort syncId, int seq, AudioClip clip, float startTime, int sourceBytes) {
             var result = HostPlayback.SwapToFull(syncId, seq, clip);
             if (result == HostPlayback.SwapResult.Replaced) {
-                MP3TogetherDebug.Debug.SwapSkipped(syncId, "another song started on this player after the preview, full song not played");
+                MP3TogetherPlugin.Debug.SwapSkipped(syncId, "another song started on this player after the preview, full song not played");
                 UnityEngine.Object.Destroy(clip);
                 return;
             }
             if (result == HostPlayback.SwapResult.NoPreview && !HostPlayback.PlayFull(syncId, clip)) {
-                MP3TogetherDebug.Log.LogWarning("mp3client: decoded syncId=" + syncId + " but its mp3 player is no longer registered - song dropped.");
+                MP3TogetherPlugin.Log.LogWarning("mp3together: decoded syncId=" + syncId + " but its mp3 player is no longer registered - song dropped.");
                 UnityEngine.Object.Destroy(clip);
                 return;
             }
-            MP3TogetherDebug.Debug.RecvDone(syncId, sourceBytes, Time.unscaledTime - startTime);
+            MP3TogetherPlugin.Debug.RecvDone(syncId, sourceBytes, Time.unscaledTime - startTime);
         }
     }
 #endif
